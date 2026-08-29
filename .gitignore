@@ -1,0 +1,21 @@
+# No trailing slash, deliberately.
+#
+# `node_modules/` matches a DIRECTORY called node_modules and nothing else. A
+# symlink called node_modules — which is what a linked local dependency is, and
+# what several package managers create — is not a directory, so the pattern
+# misses it and the link gets committed. That has happened on this codebase once
+# already: a symlink pointing at its own parent went into a commit, and every
+# checkout afterwards failed with ELOOP.
+node_modules
+
+# The build. Nothing serves it — `run.sh` runs Vite — and a checked-in copy is a
+# second answer to "what does this page say", which disagrees with the first the
+# moment somebody edits `src/`.
+dist
+
+# This app's own store. It is somebody's decided material — what they hold a
+# change to, and what has been ticked against one — and it belongs to the machine
+# the app runs on rather than to any repository this directory happens to be
+# sitting in today. That is the whole of what "an app" means here: the directory
+# can be copied to another machine, run, and be somebody's checklist.
+data
