@@ -1,6 +1,6 @@
 # Terminal
 
-A real terminal on this machine, and every Claude Code chat you can reopen in it.
+A real terminal on this machine. Your shell, in a pane, with nothing else in it.
 
 Port **7920**. `roadmap.terminal`.
 
@@ -17,9 +17,10 @@ Then open <http://127.0.0.1:7920/app>, or put it on a kehikko.
 ## What this is
 
 A pty on this machine with [xterm.js](https://xtermjs.org) in front of it — the
-same two pieces a code editor's integrated terminal is built from. You type in
-it. It runs your login shell. `claude` is something you type, and the chat list
-beside it types `claude --resume <id>` for you.
+same two pieces a code editor's integrated terminal is built from. It opens
+straight into your login shell. There is no picker, no list, and no chrome at
+all while the shell is alive: the pane is a terminal, and everything you might
+want to do in it is a thing you type.
 
 Nothing about being in a browser makes the emulation weaker. Full-screen
 programs, colours, ctrl-C, arrow keys, `vim`: all of it works, because `xterm`
@@ -31,16 +32,24 @@ could interact with it. A nicer read-only rendering is still read-only.
 
 **It is not the orchestrator.** That module (port 7850) starts agents on
 selected references and reads their transcripts off disk without attaching to
-anything. The two are siblings and neither subsumes the other. Want work
-dispatched and watched? Orchestrator. Want to sit down and type? Here.
+anything. The two are siblings and neither subsumes the other.
 
-## What it cannot do
+### What was here and is gone
 
-**Attach to a session that is already running.** A pty is a process's
-controlling terminal, and you cannot hand a second one to a process that already
-has one. So a chat that is live in another window can be read from disk but not
-typed into. The chat list says which chats have no recorded directory and
-therefore cannot be reopened at all; it does not pretend to attach to anything.
+A list of every Claude Code chat on the machine, down the left, with a press to
+reopen one. It worked. It was cut, because everything it offered was already
+reachable by typing — `claude --resume` is a command, and this is a terminal, so
+the list was a menu standing in front of a keyboard.
+
+`/api/chats` went with it, along with the reader that walked
+`~/.claude/projects`. That is a small security improvement as well as a
+deletion: it was the one door here that reported on somebody's own activity —
+what they had been working on, and where — and it carried no ticket, on the
+argument that a program running as this user could read that directory anyway.
+The argument was true, and it is better not to have needed it.
+
+If that list is wanted again, it belongs in its own module framed beside this
+one, not as a sidebar inside it.
 
 ---
 
@@ -69,7 +78,7 @@ The one that matters, and the one that is actually stoppable:
 | `frame-ancestors` | Only this origin and the host may frame the page, so a live terminal cannot be embedded in a stranger's document. |
 | Bound to 127.0.0.1 | Set explicitly in `vite.config.ts`, not left to a default. |
 
-All six are measured, not asserted — see **Measured** below.
+All six are measured, not asserted.
 
 ### A program already running as you
 
@@ -89,9 +98,9 @@ to expose because it was convenient once.
 
 ---
 
-## Two bugs worth knowing about
+## Three bugs worth knowing about
 
-Both were found by measuring, and both would have been easy to ship.
+All found by measuring. None visible to `tsc` or `bun test`.
 
 ### The careful prose was a crash
 
@@ -123,6 +132,14 @@ broken" rather than "one file lost a permission bit".
 `run.sh` chmods it on every start, because `node_modules` is not committed and
 the next clean install recreates it exactly.
 
+### A keystroke can be a space
+
+Keystrokes were sent as bare text, with a leading space marking a resize frame.
+But typing `" ls"` sends exactly that — it would have been read as a malformed
+resize and swallowed, occasionally, with nothing in any log. There is no prefix
+a keyboard cannot produce, so every frame is an envelope: `d` is data, `r` is a
+resize, and anything else is dropped rather than typed.
+
 ---
 
 ## Measured
@@ -145,31 +162,30 @@ PASS  a resize reaches the program inside the pty             (tput cols -> 132)
 In a real browser:
 
 ```
-PASS  the chat list drew rows                                 (157 rows)
-PASS  xterm mounted, a prompt was drawn
+PASS  xterm mounted with no picking first
+PASS  no chrome while the shell is alive                      (0 buttons)
+PASS  the chats door is gone                                  (404)
+PASS  a prompt was drawn immediately
 PASS  typing reached the shell and it answered                (expr 6 \* 7 -> 42)
+PASS  the terminal fills the pane                             (99% of height)
 PASS  no horizontal page overflow at 220/280/320/400/1200px
-PASS  a greeted page follows the wire's dark and light themes
-PASS  the module answered the greeting                        (roadmap.ready)
+PASS  a dead shell offers a new one, and it really starts
 ```
 
 The process group really dies with the socket — a backgrounded `sleep` started
 in the pane was gone from `pgrep` after the socket closed.
 
-`bun run typecheck` clean. `bun test` 29 pass.
+`bun run typecheck` clean. `bun test` 15 pass.
 
 ```
-curl -s -D - -o /dev/null -H 'Origin: https://evil.example' /api/chats
-  HTTP/1.1 200 OK        <- and no Access-Control-Allow-Origin, so unreadable
+curl -sI -H 'Origin: https://evil.example' /app | grep -i access-control
+  (prints nothing)
 ```
 
 ## Not verified
 
-- **Framed by the real host on 4181.** The module was framed from its own origin
-  and greeted by a probe speaking the protocol, which exercises the handshake,
-  the theme and the ready answer — but no canvas has actually held it yet.
-- **Anything but macOS + arm64.** The `spawn-helper` chmod is written to cover
-  Linux prebuild layouts too, but only darwin-arm64 has been run.
-- **`claude --resume` end to end.** The resume line is typed into a real shell
-  and is unit-tested for what it will and will not interpolate, but no probe has
-  driven a resumed conversation to completion.
+- **Framed by the real host on 4181.** The module is registered and reports
+  `ready`, and it was framed from its own origin and greeted by a probe speaking
+  the protocol — but no canvas has held it through a working session.
+- **Anything but macOS + arm64.** The `spawn-helper` chmod covers Linux prebuild
+  layouts too, but only darwin-arm64 has been run.

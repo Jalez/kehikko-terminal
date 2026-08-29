@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { command, fenced, opening, resumeLine, sayable } from '../shell.ts'
+import { command, fenced, opening, sayable } from '../shell.ts'
 
 /**
  * The fence, tested without a socket.
@@ -113,19 +113,4 @@ describe('what gets run', () => {
     expect(command('/bin/zsh')).toEqual({ file: '/bin/zsh', args: ['-i'] })
   })
 
-  test('a resume line is typed only for something shaped like a session id', () => {
-    expect(resumeLine('85f6bc23-1139-4e47-83c5-aa8e9e6b6543')).toBe(
-      'claude --resume 85f6bc23-1139-4e47-83c5-aa8e9e6b6543\n',
-    )
-  })
-
-  test('anything that could carry shell is refused rather than typed', () => {
-    /* This string is interpolated into a line that is written into a live
-       shell. It is a uuid or it is nothing. */
-    expect(resumeLine('; rm -rf ~')).toBeNull()
-    expect(resumeLine('$(whoami)')).toBeNull()
-    expect(resumeLine('a b')).toBeNull()
-    expect(resumeLine('')).toBeNull()
-    expect(resumeLine('../../etc/passwd')).toBeNull()
-  })
 })

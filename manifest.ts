@@ -11,9 +11,13 @@ export const VERSION = '1.0.0'
  * A terminal. Not a transcript viewer, not a session dashboard, not an
  * orchestrator: a pty on this machine with `xterm` in front of it, the same two
  * pieces a code editor's integrated terminal is built from. You type in it. It
- * runs your login shell, and `claude` is something you type — the chat list
- * beside it is a convenience that types `claude --resume <id>` for you, not a
- * gate that limits what may run.
+ * runs your login shell, and `claude` is one of the things you can type.
+ *
+ * It had a chat list down the side once, listing every Claude Code conversation
+ * on the machine with a press to reopen one. It was cut on the plainest
+ * grounds: everything it offered was already reachable by typing, so it was a
+ * menu standing in front of a keyboard. If that list is wanted again it should
+ * be its own module framed beside this one, not a sidebar inside it.
  *
  * The orchestrator (port 7850) is the module that does the other thing: it
  * STARTS agents on selected references and reads their transcripts off disk
@@ -32,21 +36,21 @@ export const VERSION = '1.0.0'
  * ## What is declared, and the longer list of what is not
  *
  * - **`uses: []`.** This module asks the host for nothing. Everything on screen
- *   comes off this machine's own disk — `~/.claude/projects` for the chat list,
- *   a pty for the terminal — and there is no question a host could answer that
- *   would change either. A module that declared capabilities it never exercised
- *   would be asking for permission it had no use for.
+ *   is a pty on this machine, and there is no question a host could answer that
+ *   would change what a shell does. A module that declared capabilities it never
+ *   exercised would be asking for permission it had no use for.
  * - **`prompt: false`.** A prompt is standing instructions somebody writes FOR
  *   a module, and it earns its place when the module has a decision it would
  *   make differently having read them. This one has no decisions: it runs the
  *   shell and draws the bytes. The instructions belong to whatever you type,
  *   not to the emulator you typed it in.
- * - **`storage: true`, and this one is not optional.** The page fetches its own
- *   `/api/chats` and opens a WebSocket to its own `/terminal`. Without an
- *   origin of its own the page runs opaque, both are cross-origin, and the only
- *   way to make them work would be a permissive `Access-Control-Allow-Origin`
- *   — which is precisely the header that must never appear here, because the
- *   thing behind it is a shell. See the essay in `shell.ts`.
+ * - **`storage: true`, and this one is not optional.** The page opens a
+ *   WebSocket to its own `/terminal`, and its own module scripts are fetched in
+ *   CORS mode whatever else is true. Without an origin of its own the page runs
+ *   opaque, both are cross-origin, and the only way to make them work would be
+ *   a permissive `Access-Control-Allow-Origin` — which is precisely the header
+ *   that must never appear here, because the thing behind it is a shell. See
+ *   the essay in `shell.ts`.
  * - **No extensions.** Nothing here happens that another module has any
  *   business being told about. What you type in your own terminal is not an
  *   event the canvas needs.
@@ -70,7 +74,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   id: ID,
   name: 'Terminal',
   version: VERSION,
-  summary: 'A real terminal on this machine, and every Claude Code chat you can reopen in it.',
+  summary: 'A real terminal on this machine. Your shell, in a pane, with nothing else in it.',
   /**
    * What an agent should do about this module being here.
    *

@@ -21,12 +21,12 @@ import '@xterm/xterm/css/xterm.css'
  *
  * ## Why `key` matters upstream
  *
- * There is no code here for "the chat changed". Switching chats REMOUNTS this
- * component, because the parent gives it a `key` — so a new socket, a new pty
+ * There is no code here for "start another shell". Asking for one REMOUNTS this
+ * component, because the parent changes its `key` — so a new socket, a new pty
  * and a fresh emulator, and the old ones are closed by this effect's cleanup.
- * Trying to re-point a live terminal at a different shell would mean deciding
- * what to do with a half-typed command in the old one, and there is no good
- * answer to that question. Remounting never has to ask it.
+ * Restarting a live terminal in place would mean deciding what to do with a
+ * half-typed command, and there is no good answer to that question. Remounting
+ * never has to ask it.
  */
 
 /** What the page was served, minted once per process. See `page.ts`. */
@@ -37,9 +37,9 @@ function ticket(): string {
     const held: unknown = JSON.parse(tag.textContent)
     return typeof held === 'string' ? held : ''
   } catch {
-    /* Louder than a silent empty string would be, but only in the console: the
-       page still renders and the socket still refuses, which is the sentence
-       the person needs and it is already on screen. */
+    /* Louder than a silent empty string, but only in the console: the page
+       still renders and the socket still refuses, which is the sentence the
+       person needs and it is already on screen. */
     console.error('terminal: the ticket in this page is not a JSON string')
     return ''
   }
@@ -66,21 +66,15 @@ export type Standing =
   | { at: 'closed'; why: string }
 
 export function TerminalView({
-  cwd,
-  resume,
   theme,
   onStanding,
 }: {
-  /** Where the shell starts. Null means the user's home directory. */
-  cwd: string | null
-  /** A chat to reopen, typed into the fresh shell. Null for a plain terminal. */
-  resume: string | null
   theme: 'light' | 'dark'
   onStanding?: (standing: Standing) => void
 }) {
   const holder = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
-  const [standing, setStanding] = useState<Standing>({ at: 'opening' })
+  const [, setStanding] = useState<Standing>({ at: 'opening' })
 
   /* Held in a ref and read inside the effect rather than listed as a
      dependency: a parent that re-created this callback on every render would
@@ -102,8 +96,6 @@ export function TerminalView({
       fontSize: 12,
       /* The scrollback a person actually wants when a build scrolls past. */
       scrollback: 5000,
-      /* Enough that `less` and `vim` behave, and the cursor blinks like every
-         other terminal the person uses. */
       cursorBlink: true,
       theme: palette(theme),
     })
@@ -119,8 +111,7 @@ export function TerminalView({
       socket.send(
         JSON.stringify({
           ticket: ticket(),
-          cwd,
-          resume,
+          cwd: null,
           cols: terminal.cols,
           rows: terminal.rows,
         }),
@@ -137,10 +128,7 @@ export function TerminalView({
     }
 
     socket.onclose = (event: CloseEvent) => {
-      move({
-        at: 'closed',
-        why: event.reason || 'the connection ended',
-      })
+      move({ at: 'closed', why: event.reason || 'the connection ended' })
     }
 
     socket.onerror = () => {
@@ -162,7 +150,7 @@ export function TerminalView({
      * A pty whose columns disagree with the program's idea of them wraps every
      * line in the wrong place — the single most common way a browser terminal
      * is built badly. So the fit is measured here and the NEW size is sent, and
-     * the pty is resized to match rather than being left at its opening guess.
+     * the pty is resized to match rather than left at its opening guess.
      */
     const resized = new ResizeObserver(() => {
       try {
@@ -187,29 +175,14 @@ export function TerminalView({
       terminal.dispose()
       term.current = null
     }
-    /* `cwd` and `resume` are read once, at open. Changing which chat is shown
-       remounts this component — see the essay above — so they cannot change
-       under a live socket, and listing them would only invite somebody to
-       "fix" that by re-pointing a running shell. */
+    /* The theme is deliberately NOT a dependency: a theme change must not
+       restart somebody's shell. It is applied to the live emulator below. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, resume])
+  }, [])
 
-  /* The theme is NOT on that effect's dependency list, because a theme change
-     must not restart somebody's shell. Applied to the live emulator instead. */
   useEffect(() => {
     if (term.current) term.current.options.theme = palette(theme)
   }, [theme])
 
-  return (
-    <div className="relative h-full w-full">
-      <div ref={holder} className="h-full w-full" />
-      {standing.at === 'closed' && (
-        <div className="bg-background/90 absolute inset-0 grid place-items-center p-4 text-center">
-          <p className="text-muted-foreground text-xs">
-            {standing.why}. Pick a chat, or start a new terminal, to open another shell.
-          </p>
-        </div>
-      )}
-    </div>
-  )
+  return <div ref={holder} className="h-full w-full" />
 }

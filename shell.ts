@@ -111,8 +111,6 @@ export interface Opening {
   ticket: string
   /** Where to start. Null means the user's home directory. */
   cwd: string | null
-  /** A session id to resume, or null for a fresh shell. */
-  resume: string | null
   cols: number
   rows: number
 }
@@ -144,7 +142,6 @@ export function opening(raw: unknown, ticket: string = TICKET): Opening | string
   return {
     ticket,
     cwd: typeof held.cwd === 'string' && held.cwd ? held.cwd : null,
-    resume: typeof held.resume === 'string' && held.resume ? held.resume : null,
     /* Clamped rather than trusted. A pty told it is one column wide wraps every
        character onto its own line; told it is a million, programs allocate for
        it. Neither is worth crashing over, and neither is worth obeying. */
@@ -167,22 +164,6 @@ export function opening(raw: unknown, ticket: string = TICKET): Opening | string
  */
 export function command(shell: string = userInfo().shell || '/bin/zsh'): { file: string; args: string[] } {
   return { file: shell, args: ['-i'] }
-}
-
-/**
- * What to type into a fresh shell to reopen a chat.
- *
- * Typed as input rather than spawned as the command, and that is deliberate: it
- * leaves a real shell underneath, so when the chat exits the person still has a
- * terminal instead of a dead pane. It is also visible — they can see what was
- * run, and edit it before pressing return if the list got the directory wrong.
- *
- * The id is quoted and checked, because it is interpolated into a shell line. A
- * session id is a uuid; anything that is not one does not get typed.
- */
-export function resumeLine(sessionId: string): string | null {
-  if (!/^[0-9a-fA-F-]{8,64}$/.test(sessionId)) return null
-  return `claude --resume ${sessionId}\n`
 }
 
 export interface Live {
@@ -374,15 +355,6 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
             if (ws.readyState === ws.OPEN) shut(4000, `the shell exited (${exitCode})`)
           })
           log(`terminal: a shell in ${said.cwd ?? homedir()}`)
-          if (said.resume) {
-            const line = resumeLine(said.resume)
-            /* Typed, not spawned — see `resumeLine`. Written after a beat so it
-               lands after the shell has drawn its first prompt; a line sent
-               into a shell that has not finished starting is a line the shell
-               never sees, and the symptom is a pane that looks like it ignored
-               you. */
-            if (line) setTimeout(() => pty?.write(line), 250)
-          }
         } catch (error: unknown) {
           const why = error instanceof Error ? error.message : String(error)
           log(`terminal: could not start a shell — ${why}`)
