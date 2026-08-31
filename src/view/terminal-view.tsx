@@ -16,7 +16,7 @@ import '@xterm/xterm/css/xterm.css'
  * One component owns the connection, and it owns it on the same lifetime as the
  * `Terminal` it draws into. That is not tidiness: a socket outliving its
  * terminal is a pty writing into a disposed emulator, and a terminal outliving
- * its socket is a pane that accepts typing and silently drops it. Both are
+ * its socket is a container that accepts typing and silently drops it. Both are
  * states somebody would call a hang.
  *
  * ## Why `key` matters upstream
@@ -52,7 +52,7 @@ function ticket(): string {
  * so a `.dark` class on the document does nothing to it. Told once at
  * construction and told again whenever the host changes the theme — otherwise
  * this is the one rectangle on the canvas that stays in the other theme, which
- * looks like a bug in the pane rather than a thing nobody wired up.
+ * looks like a bug in the container rather than a thing nobody wired up.
  */
 function palette(theme: 'light' | 'dark') {
   return theme === 'dark'
@@ -156,7 +156,7 @@ export function TerminalView({
       try {
         fit.fit()
       } catch {
-        /* A pane measured at zero while it is being laid out. Nothing to do;
+        /* A container measured at zero while it is being laid out. Nothing to do;
            the next observation will have a real size. */
         return
       }

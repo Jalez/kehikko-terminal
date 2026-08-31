@@ -18,9 +18,9 @@ const ID = 'roadmap.terminal'
  * need."
  *
  * That is the right call and it is worth writing down why rather than only
- * that it happened. The chat list was a second thing competing for a pane that
+ * that it happened. The chat list was a second thing competing for a container that
  * has exactly one job, and everything it offered was already reachable by
- * typing — `claude --resume` is a command, and this is a terminal. A pane that
+ * typing — `claude --resume` is a command, and this is a terminal. A container that
  * lists what you could type instead of letting you type it has added a menu in
  * front of a keyboard.
  *
@@ -33,7 +33,7 @@ const ID = 'roadmap.terminal'
  *
  * This module asks the host for nothing — `uses` is empty — and the context
  * carries exactly one fact it acts on: the theme. A terminal is about a shell;
- * the canvas switching epics has no bearing on what you are typing, and a pane
+ * the canvas switching epics has no bearing on what you are typing, and a container
  * that restarted your shell because somebody moved the subject elsewhere would
  * be unusable. The greeting is still answered, because a module that stays
  * silent is a module a host reports as broken.
@@ -100,7 +100,7 @@ export function App() {
    *
    * A terminal with a toolbar is a terminal with less terminal in it. While the
    * shell is running there is nothing here to press, because everything you
-   * could want to do is a thing you type. When it EXITS the pane would
+   * could want to do is a thing you type. When it EXITS the container would
    * otherwise be a dead rectangle with no way out, and that is the one moment a
    * button earns its pixels.
    */

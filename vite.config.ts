@@ -35,7 +35,7 @@ function doors(): Plugin {
     configureServer(server) {
       if (!server.httpServer) {
         server.config.logger.error(
-          'terminal: no HTTP server to attach the terminal socket to. The pane will load and no shell will ever open.',
+          'terminal: no HTTP server to attach the terminal socket to. The container will load and no shell will ever open.',
         )
       } else {
         serveTerminals(server.httpServer, PORT, (line) => server.config.logger.info(line))

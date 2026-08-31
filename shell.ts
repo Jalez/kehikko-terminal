@@ -44,7 +44,7 @@ import type { Duplex } from 'node:stream'
  * ## The ticket is per-process, not per-connection
  *
  * One string, minted at start, embedded in the page. Not single-use, because a
- * pane legitimately opens many terminals over its life and a one-shot ticket
+ * container legitimately opens many terminals over its life and a one-shot ticket
  * would mean a round trip before every one of them for no gain: an attacker who
  * can read the ticket once can read it again, since it comes from the same
  * place. It dies with the process, so it cannot outlive the program it
@@ -310,7 +310,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
      * `pty.kill()` signals the process; the shell's children are in the same
      * process group and get SIGHUP when the pty closes, which is how a real
      * terminal window ends its jobs. The explicit group kill is a belt on top,
-     * because a child that detached itself would otherwise outlive the pane
+     * because a child that detached itself would otherwise outlive the container
      * that started it and there would be no way left to reach it.
      */
     try {

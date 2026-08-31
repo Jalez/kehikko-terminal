@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils.ts'
 /**
  * shadcn's button, with one size added for this app's normal case.
  *
- * `pane` is a target sized for a pane 220 pixels wide, and it is a variant
+ * `container` is a target sized for a container 220 pixels wide, and it is a variant
  * rather than a set of overrides at each call site so that every press on this
  * page is the same height. The default `sm` is 32 pixels tall and fine on a
  * page; in a narrow column beside sixteen rows it eats the column.
@@ -24,7 +24,7 @@ const buttonVariants = cva(
       size: {
         default: 'h-9 px-4 py-2',
         sm: 'h-8 rounded-md px-3',
-        pane: 'h-6 rounded px-2 text-xs',
+        container: 'h-6 rounded px-2 text-xs',
         icon: 'size-8',
       },
     },

@@ -1,6 +1,6 @@
 # Terminal
 
-A real terminal on this machine. Your shell, in a pane, with nothing else in it.
+A real terminal on this machine. Your shell, in a container, with nothing else in it.
 
 Port **7920**. `roadmap.terminal`.
 
@@ -19,7 +19,7 @@ Then open <http://127.0.0.1:7920/app>, or put it on a kehikko.
 A pty on this machine with [xterm.js](https://xtermjs.org) in front of it — the
 same two pieces a code editor's integrated terminal is built from. It opens
 straight into your login shell. There is no picker, no list, and no chrome at
-all while the shell is alive: the pane is a terminal, and everything you might
+all while the shell is alive: the container is a terminal, and everything you might
 want to do in it is a thing you type.
 
 Nothing about being in a browser makes the emulation weaker. Full-screen
@@ -167,13 +167,13 @@ PASS  no chrome while the shell is alive                      (0 buttons)
 PASS  the chats door is gone                                  (404)
 PASS  a prompt was drawn immediately
 PASS  typing reached the shell and it answered                (expr 6 \* 7 -> 42)
-PASS  the terminal fills the pane                             (99% of height)
+PASS  the terminal fills the container                             (99% of height)
 PASS  no horizontal page overflow at 220/280/320/400/1200px
 PASS  a dead shell offers a new one, and it really starts
 ```
 
 The process group really dies with the socket — a backgrounded `sleep` started
-in the pane was gone from `pgrep` after the socket closed.
+in the container was gone from `pgrep` after the socket closed.
 
 `bun run typecheck` clean. `bun test` 15 pass.
 

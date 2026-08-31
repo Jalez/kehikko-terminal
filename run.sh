@@ -24,7 +24,7 @@
 # ## What this process is, said plainly
 #
 # It serves a page, and it opens ptys running your login shell for that page.
-# Anything you type in the pane runs on this machine as you, with no sandbox
+# Anything you type in the container runs on this machine as you, with no sandbox
 # between. The fence is in `shell.ts` and it is real, but it is a fence against
 # OTHER PAGES — not against what you yourself type. Start this the way you would
 # start a terminal emulator, because that is what it is.
@@ -55,11 +55,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 export PORT="${PORT:-7920}"
 
 # node-pty is native. If it is missing, every other part of this module works
-# and only the terminal fails — a pane that draws a chat list and then refuses
+# and only the terminal fails — a container that draws a chat list and then refuses
 # to open a shell, with the reason in this log rather than on screen. Say so
 # here, at start, where somebody can act on it.
 if [ ! -d node_modules/node-pty ]; then
-  echo "terminal: node-pty is not installed. Run 'bun install' first, or the pane will list chats and open no shells." >&2
+  echo "terminal: node-pty is not installed. Run 'bun install' first, or the container will list chats and open no shells." >&2
 fi
 
 # ---------------------------------------------------------------------------

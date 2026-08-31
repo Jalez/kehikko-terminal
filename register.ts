@@ -27,7 +27,7 @@ import { ID } from './manifest.ts'
  *
  * The host can start a module that is registered but not answering, by running
  * `run.sh` in the directory named here. Without `dir` it can only report that
- * the module is down and leave the person to find it. With it, the pane offers
+ * the module is down and leave the person to find it. With it, the container offers
  * to start the thing it is meant to be showing.
  *
  * ## Where a host looks

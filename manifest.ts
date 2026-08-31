@@ -28,8 +28,8 @@ export const VERSION = '1.0.0'
  * ## `global`, not `epic`
  *
  * A terminal is not about an epic. It is about a directory and a shell, and the
- * canvas's subject changing should not disturb one — a pane that reset your
- * shell because somebody switched epics in another pane would be unusable. The
+ * canvas's subject changing should not disturb one — a container that reset your
+ * shell because somebody switched epics in another container would be unusable. The
  * context is still received and still honoured for the one thing it genuinely
  * says about this module: the theme.
  *
@@ -74,7 +74,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   id: ID,
   name: 'Terminal',
   version: VERSION,
-  summary: 'A real terminal on this machine. Your shell, in a pane, with nothing else in it.',
+  summary: 'A real terminal on this machine. Your shell, in a container, with nothing else in it.',
   /**
    * What an agent should do about this module being here.
    *

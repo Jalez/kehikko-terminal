@@ -6,16 +6,16 @@
  *
  * ## Container queries, not viewport breakpoints
  *
- * This page's normal case is a pane 220 to 400 pixels wide inside somebody's
+ * This page's normal case is a container 220 to 400 pixels wide inside somebody's
  * canvas, on a monitor two thousand pixels across. Every viewport breakpoint
  * Tailwind ships would therefore fire — `lg:` is true, `xl:` is true — and the
  * page would lay itself out for a screen it has three per cent of. So the
  * `<body>` is a container, every responsive class in this app is a `@container`
- * class, and the only thing any of them ever measures is the pane.
+ * class, and the only thing any of them ever measures is the container.
  *
  * ## Nothing overflows sideways, ever
  *
- * A pane that scrolls horizontally is a pane where half a sentence is behind an
+ * A container that scrolls horizontally is a container where half a sentence is behind an
  * edge nobody thinks to drag. `overflow-x: hidden` on the body would HIDE that
  * rather than fix it, so it is not here: what is here is `overflow-wrap` on the
  * prose and `min-width: 0` on the flex children, which are the two things that
@@ -144,17 +144,17 @@
 
   /*
    * The container every responsive class in this app measures. Named, so a
-   * `@sm/pane:` class cannot accidentally attach itself to some nested container
+   * `@sm/container:` class cannot accidentally attach itself to some nested container
    * a component introduces later.
    */
   body {
-    container: pane / inline-size;
+    container: container / inline-size;
     font-synthesis-weight: none;
     text-rendering: optimizeLegibility;
   }
 
   /*
-   * Long, unbroken strings are the one thing that widens a pane past its frame:
+   * Long, unbroken strings are the one thing that widens a container past its frame:
    * a branch name, a URL out of a tracker, a ref somebody typed. Breaking them
    * is the honest fix — the whole string stays on screen, wrapped, rather than
    * being clipped by an `overflow: hidden` that says nothing about what is
