@@ -201,11 +201,27 @@ export function TerminalView({
         if (usable()) connect()
         return
       }
+      /*
+       * A container with no size is not a container two characters wide.
+       *
+       * Folding a container hides its frame, which fires an observation at zero.
+       * Fitting to that shrank the emulator to about two columns while nobody
+       * could see it, the pty was told the clamped minimum, and the shell drew
+       * its next prompt into a world neither of them agreed on. Unfolding fired
+       * another observation and put the size right — too late for the prompt
+       * already on screen, which is why the staircase appeared on UNFOLD
+       * having been caused on fold.
+       *
+       * The same guard the connect path uses, for the same reason: an absent
+       * measurement is not a small measurement, and the honest response to it
+       * is to do nothing at all.
+       */
+      if (!usable()) return
       try {
         fit.fit()
       } catch {
-        /* A container measured at zero while it is being laid out. Nothing to do;
-           the next observation will have a real size. */
+        /* Measured at zero while being laid out. Nothing to do; the next
+           observation will have a real size. */
         return
       }
       if (socket.readyState === WebSocket.OPEN) {
