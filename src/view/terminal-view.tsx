@@ -27,6 +27,46 @@ import '@xterm/xterm/css/xterm.css'
  * Restarting a live terminal in place would mean deciding what to do with a
  * half-typed command, and there is no good answer to that question. Remounting
  * never has to ask it.
+ *
+ * ## The one that is NOT this module's, and the evidence for saying so
+ *
+ * Reported twice: "only by switching to another app it shows what has been
+ * written." The first time it really was this file — nothing had connected, so
+ * nothing echoed, and the app switch was what finally produced a resize
+ * observation; see the essay on `waiting` further down. That is fixed, and the
+ * sentence came back anyway, which is the part worth writing down.
+ *
+ * The second cause is in the window, not in the page. In WKWebView as Tauri
+ * hosts it, an application that stops being frontmost has its page marked
+ * `document.visibilityState === 'hidden'` and `requestAnimationFrame` stops
+ * firing ENTIRELY — measured at 60/s, then 0/s in the following second, and
+ * zero for as long as it is left there. It does not need to be covered. The
+ * window is still on screen and the person is still looking at it.
+ *
+ * xterm draws rows only inside a `requestAnimationFrame`, through one
+ * `RenderDebouncer` that every renderer sits behind. So while the app is in the
+ * background the pty still produces, the socket still delivers and
+ * `terminal.write()` still parses — and the render is a frame that never
+ * arrives. Come back, the pending frame runs, and the whole backlog appears at
+ * once, which is the reported sentence word for word.
+ *
+ * Three fixes suggest themselves here and all three are wrong:
+ *
+ *   - `@xterm/addon-webgl` or `@xterm/addon-canvas`. They replace the renderer,
+ *     and the renderer is not what stopped: `RenderService` debounces into a
+ *     rAF before any of them is reached, so all three stop together.
+ *   - A repaint nudge — toggling a style, reading `offsetHeight` — on write. A
+ *     page whose rendering update is suspended does not paint what you write
+ *     into it. There is nothing to nudge.
+ *   - A timer that renders when rAF will not. Same answer, and it would also be
+ *     the per-tick work this workspace refuses everywhere else.
+ *
+ * It is the shell's to fix, in `kehikko-desktop`, because the shell is what
+ * holds the WKWebView and decides what it is told about its window.
+ * `dev/frozen-while-backgrounded.js` is the measurement, with the numbers and
+ * the command that produced them, so the next person does not spend the
+ * afternoon in Chromium finding nothing — which is where this one started, and
+ * Chromium and Playwright's headed WebKit both paint every keystroke on time.
  */
 
 /** What the page was served, minted once per process. See `page.ts`. */
