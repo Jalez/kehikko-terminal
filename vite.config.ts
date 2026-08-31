@@ -3,14 +3,29 @@ import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { WELL_KNOWN } from 'roadmap-module-protocol'
+import { serves } from 'roadmap-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
 import { answer } from './doors.ts'
-import { MANIFEST } from './manifest.ts'
+import { ID, MANIFEST, PREFERRED_PORT } from './manifest.ts'
 import { page } from './page.ts'
 import { TICKET, serveTerminals } from './shell.ts'
 
-const PORT = Number(process.env.PORT ?? 7920)
+/**
+ * The port this process actually ended up on, which is not knowable here.
+ *
+ * `serves()` decides it — preferring `$PORT`, then `PREFERRED_PORT` — and if
+ * something else holds that address it moves to the next free one. So this
+ * starts as the preference and is CORRECTED below, inside `listening`, from
+ * `httpServer.address()`.
+ *
+ * Getting that wrong is not cosmetic in this module. `fenced()` in `shell.ts`
+ * accepts a handshake only when its `Origin` and `Host` name this server's own
+ * port; a fence holding a stale 7920 while the server answers on 7921 refuses
+ * this module's own page, and the symptom is a container that draws and opens no
+ * shell. So nothing reads this until the socket is up.
+ */
+let bound = PREFERRED_PORT
 
 /**
  * Every door this module answers on, plus the socket, served by the one process
@@ -33,16 +48,25 @@ function doors(): Plugin {
   return {
     name: 'terminal-doors',
     configureServer(server) {
-      if (!server.httpServer) {
+      const http = server.httpServer
+      if (!http) {
         server.config.logger.error(
           'terminal: no HTTP server to attach the terminal socket to. The container will load and no shell will ever open.',
         )
       } else {
-        serveTerminals(server.httpServer, PORT, (line) => server.config.logger.info(line))
+        /* After `listening`, not before, because the fence needs the port this
+           server BOUND rather than the one it asked for — see `bound` above.
+           Nothing can arrive on the socket before the server is listening, so
+           attaching the upgrade handler here costs nothing. */
+        http.once('listening', () => {
+          const address = http.address()
+          if (address && typeof address === 'object') bound = address.port
+          serveTerminals(http, bound, (line) => server.config.logger.info(line))
+        })
       }
 
       server.middlewares.use((request, response, next) => {
-        const url = new URL(request.url ?? '/', `http://127.0.0.1:${PORT}`)
+        const url = new URL(request.url ?? '/', `http://127.0.0.1:${bound}`)
         const path = url.pathname
         const method = (request.method ?? 'GET').toUpperCase()
 
@@ -95,7 +119,7 @@ function doors(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [doors(), react(), tailwindcss()],
+  plugins: [serves({ id: ID, prefer: PREFERRED_PORT }), doors(), react(), tailwindcss()],
   resolve: { alias: { '@': resolve(import.meta.dirname, 'src') } },
   /**
    * Loopback, explicitly, and no `cors` line anywhere in this file.
@@ -110,11 +134,24 @@ export default defineConfig({
    * `cors: false` is written rather than omitted, so that adding it back is a
    * deliberate edit to a line that says what it is, rather than an easy
    * addition to a config that never mentioned it.
+   *
+   * `port` and `strictPort` used to be here and are not. `strictPort: true`
+   * meant a taken 7920 stopped this module dead — `Error: Port 7920 is already
+   * in use` — which was the only honest option while nothing handled a
+   * collision, and a bad one for a module whose registration carries `keep: true`
+   * precisely so that nothing reaps it out from under a running command.
+   * `serves()`, first in the plugin list above, decides the port instead: a free
+   * 7920 in silence, a clean exit rather than a second copy if this module is
+   * already answering there, and otherwise a loud move to the next free port
+   * with the registration rewritten to the port the server actually bound. It
+   * sets `strictPort: false` itself, so Vite's own fallback is a second net
+   * rather than the absence of one.
+   *
+   * `host` stays, and stays explicit. It is the half of this block that is about
+   * the fence rather than about the address.
    */
   server: {
     host: '127.0.0.1',
-    port: PORT,
-    strictPort: true,
     cors: false,
   },
 })

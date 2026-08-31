@@ -4,6 +4,31 @@ export const ID = 'roadmap.terminal'
 export const VERSION = '1.0.0'
 
 /**
+ * The port this module would rather have, said once and beside the name it goes
+ * with.
+ *
+ * It used to be said three times — `export PORT="${PORT:-7920}"` in `run.sh`,
+ * `Number(process.env.PORT ?? 7920)` at the top of `vite.config.ts`, and again
+ * in `register.ts` — with nothing keeping them in step, and a fourth copy
+ * sitting in `~/.roadmap/modules` from whenever somebody last ran the third.
+ *
+ * It is here rather than in `vite.config.ts` because `register.ts` needs it too,
+ * and importing a Vite config to read one number would build the plugin list and
+ * mint this process's terminal ticket on the way to finding out what to write
+ * down. A ticket minted by a program that then exits is a ticket no page will
+ * ever be given.
+ *
+ * It is a PREFERENCE and not a promise, and that is a heavier sentence in this
+ * module than in its siblings. The port is not only an address here: `fenced()`
+ * in `shell.ts` checks a handshake's `Origin` and `Host` against the port this
+ * server is ACTUALLY on, and a fence checking the wrong number refuses this
+ * module's own page. So the port the server bound is read off
+ * `httpServer.address()` after `listening` and handed to `serveTerminals` from
+ * there — never assumed from this constant. See `vite.config.ts`.
+ */
+export const PREFERRED_PORT = 7920
+
+/**
  * What this app says about itself when a host asks.
  *
  * ## What this module is, and what it deliberately is not

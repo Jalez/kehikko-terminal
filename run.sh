@@ -7,19 +7,44 @@
 #     never a command line: a string a host handed to a shell would make a
 #     registration file a place to write shell. That rule is general, and this
 #     module is the one where breaking it would be worst.
-#   - $PORT from the environment. Whoever starts this chose the port; a script
-#     that picked its own would answer somewhere nobody is looking. 7920 is the
-#     default and the number in the registration — 7820, 7830, 7840, 7850,
-#     7860, 7870, 7890, 7900 and 7910 are taken by the other modules here.
+#   - No port exported here, and no `--strictPort` behind it. This script used
+#     to set `PORT="${PORT:-7920}"` and `vite.config.ts` read it back, which put
+#     the number in two files and `register.ts` in a third. It is said once now,
+#     beside the id, as `PREFERRED_PORT` in `manifest.ts`, and `serves()` in
+#     `vite.config.ts` is what acts on it.
+#
+#     $PORT is still honoured — by the plugin rather than by this file — and for
+#     the reason this bullet always gave: whoever starts this chose the port, and
+#     a module that picked its own would answer somewhere nobody is looking. A
+#     host passes the port from the registration when it spawns this script,
+#     which is the address it is about to go and read.
+#
+#     What `strictPort` bought was a module that DIED on a taken port rather than
+#     one answering quietly somewhere else, and that was the only honest option
+#     while nothing handled a collision. It is a poor trade for this module in
+#     particular: its registration carries `keep: true` so that nothing reaps a
+#     terminal out from under a running command, and a module that refuses to
+#     start is a module holding no shell at all. `serves()` handles the collision
+#     — a free 7920 in silence, a clean exit rather than a second copy if this
+#     module is already answering there, and otherwise a loud move with the
+#     registration rewritten to the port actually bound. The fence in `shell.ts`
+#     follows that port rather than assuming it; see `vite.config.ts`.
 #   - `exec`, and the foreground. A script that forks and returns leaves whoever
 #     started it holding a pid that stops nothing, and Stop is only ever offered
 #     for what a host started.
 #   - `cd` to this script's own directory, so the module runs beside its own
 #     source however it was invoked.
 #
-# It does NOT register. Registration is a deliberate act by a person — see
-# `register.ts` — and a start script that quietly wrote into somebody's home
-# directory would be doing it on their behalf.
+# It does NOT register a module that had none. Registration is a deliberate act
+# by a person — see `register.ts` — and a start script that quietly wrote into
+# somebody's home directory would be doing it on their behalf, which is a
+# sharper point here than anywhere else in the workspace because what gets framed
+# is a shell. That argument is untouched. What the Vite plugin now writes on
+# every start is this module's ADDRESS, which is a different sentence: the person
+# decided to be framed, they did not decide to be framed at 7920 in particular,
+# and a registration still naming a port this module has drifted off is one the
+# host sweeps to find nothing. It MERGES, so the `keep: true` a person put beside
+# the url survives the rewrite.
 #
 # ## What this process is, said plainly
 #
@@ -51,8 +76,6 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
-
-export PORT="${PORT:-7920}"
 
 # node-pty is native. If it is missing, every other part of this module works
 # and only the terminal fails — a container that draws a chat list and then refuses
