@@ -102,46 +102,88 @@ export function TerminalView({
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(node)
-    fit.fit()
     term.current = terminal
 
-    const socket = new WebSocket(`ws://${location.host}/terminal`)
+    /*
+     * Nothing is spawned until this container has a real width.
+     *
+     * `fit()` used to run on the line after `open()`, and the socket opened
+     * immediately after that. On a container that had just been shown — freshly
+     * placed, unfolded, or a canvas switched to — the element had not been laid
+     * out yet, so the fit measured a box a couple of characters wide. xterm
+     * sized itself to that; the pty was told the clamped minimum; and the two
+     * disagreed about how wide the world was.
+     *
+     * What that looks like is a prompt falling down the screen two characters
+     * at a time:
+     *
+     *     (b
+     *       as
+     *         e)
+     *
+     * It corrects itself the moment the observer below fires, which is why it
+     * reads as a glitch rather than a bug — the evidence scrolls away and the
+     * next prompt is fine.
+     *
+     * The fix is not a better guess. It is to not guess: a terminal whose size
+     * is unknown has nothing useful to say to a shell, so it waits. `usable`
+     * is the smallest width worth starting at — below it, whatever we sent
+     * would be a number we would immediately correct.
+     */
+    const usable = () => node.clientWidth > 40 && node.clientHeight > 40
 
-    socket.onopen = () => {
-      socket.send(
-        JSON.stringify({
-          ticket: ticket(),
-          cwd: null,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }),
-      )
-      move({ at: 'live' })
-      terminal.focus()
+    let socket: WebSocket | null = null
+
+    const connect = () => {
+      if (socket) return
+      try {
+        fit.fit()
+      } catch {
+        return
+      }
+      const live = new WebSocket(`ws://${location.host}/terminal`)
+      socket = live
+
+      live.onopen = () => {
+        live.send(
+          JSON.stringify({
+            ticket: ticket(),
+            cwd: null,
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }),
+        )
+        move({ at: 'live' })
+        terminal.focus()
+      }
+
+      wire(live)
     }
 
-    /* Output, straight through. Never parsed — it is a byte stream from a
-       program, and the moment this side starts looking for structure in it, a
-       program that prints JSON becomes a program that can talk to this page. */
-    socket.onmessage = (event: MessageEvent) => {
-      terminal.write(typeof event.data === 'string' ? event.data : '')
-    }
+    function wire(live: WebSocket) {
+      /* Output, straight through. Never parsed — it is a byte stream from a
+         program, and the moment this side starts looking for structure in it, a
+         program that prints JSON becomes a program that can talk to this page. */
+      live.onmessage = (event: MessageEvent) => {
+        terminal.write(typeof event.data === 'string' ? event.data : '')
+      }
 
-    socket.onclose = (event: CloseEvent) => {
-      move({ at: 'closed', why: event.reason || 'the connection ended' })
-    }
+      live.onclose = (event: CloseEvent) => {
+        move({ at: 'closed', why: event.reason || 'the connection ended' })
+      }
 
-    socket.onerror = () => {
-      /* No detail available by design — the browser does not tell a page why a
-         socket failed, precisely so a page cannot use it to probe. Say the true
-         and useless thing rather than inventing a specific one. */
-      move({ at: 'closed', why: 'the connection could not be made' })
+      live.onerror = () => {
+        /* No detail available by design — the browser does not tell a page why
+           a socket failed, precisely so a page cannot use it to probe. Say the
+           true and useless thing rather than inventing a specific one. */
+        move({ at: 'closed', why: 'the connection could not be made' })
+      }
     }
 
     /* Every frame is an envelope; see the essay in `shell.ts`. Bare text would
        have made a leading space indistinguishable from a control frame. */
     const typing = terminal.onData((data: string) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ d: data }))
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ d: data }))
     })
 
     /*
@@ -153,6 +195,12 @@ export function TerminalView({
      * the pty is resized to match rather than left at its opening guess.
      */
     const resized = new ResizeObserver(() => {
+      /* The first observation with a real size is what starts the shell. After
+         that this is only the resize path. */
+      if (!socket) {
+        if (usable()) connect()
+        return
+      }
       try {
         fit.fit()
       } catch {
@@ -166,12 +214,18 @@ export function TerminalView({
     })
     resized.observe(node)
 
+    /* A container that was already laid out when this mounted — the common case
+       once a canvas is settled — has its size now and should not wait for an
+       observation that may not come. */
+    if (usable()) connect()
+
     return () => {
       resized.disconnect()
       typing.dispose()
       /* Closed before the terminal is disposed, so no late frame can arrive for
-         an emulator that is gone. */
-      socket.close()
+         an emulator that is gone. A container unmounted before it was ever wide
+         enough has no socket to close. */
+      socket?.close()
       terminal.dispose()
       term.current = null
     }
