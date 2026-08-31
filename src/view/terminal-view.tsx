@@ -155,6 +155,9 @@ export function TerminalView({
         )
         move({ at: 'live' })
         terminal.focus()
+        /* Whatever was typed while this was opening, in the order it was typed
+           and after the opening frame, which the server reads first. */
+        for (const data of waiting.splice(0)) live.send(JSON.stringify({ d: data }))
       }
 
       wire(live)
@@ -180,10 +183,52 @@ export function TerminalView({
       }
     }
 
-    /* Every frame is an envelope; see the essay in `shell.ts`. Bare text would
-       have made a leading space indistinguishable from a control frame. */
+    /*
+     * Every frame is an envelope; see the essay in `shell.ts`. Bare text would
+     * have made a leading space indistinguishable from a control frame.
+     *
+     * ## Nothing typed is ever dropped, and a keystroke can start the shell
+     *
+     * This used to be `if (socket && readyState === OPEN) send(...)`, which
+     * reads like defensive coding and was in fact the bug: a terminal that had
+     * not connected swallowed everything a person typed, silently, while
+     * looking exactly like a terminal. It had a cursor, it took focus, and it
+     * did nothing.
+     *
+     * The way to get into that state was ordinary. Connecting was reached only
+     * from a resize observation, so a container whose size never CHANGED after
+     * mount — already laid out, or laid out in a way that produced one
+     * observation too early — never got a second one, and never connected.
+     * Switching to another app and back forced a fresh layout, the observer
+     * fired, and it started working, which is exactly how it was reported.
+     *
+     * So a keystroke now connects. It is not a fallback bolted on: somebody
+     * typing into this terminal is the strongest evidence available that it is
+     * on screen, focused and wanted — better evidence than any measurement,
+     * because a measurement is this program guessing about that and a keystroke
+     * is a person telling it.
+     *
+     * And what they typed is kept rather than raced. `connect` opens a socket
+     * that is not usable for some milliseconds, and the characters typed in
+     * that window are the first thing somebody wrote — very often a command
+     * they are part-way through. They go in `waiting` and are flushed the
+     * moment the socket opens, in order.
+     */
+    const waiting: string[] = []
+
     const typing = terminal.onData((data: string) => {
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ d: data }))
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ d: data }))
+        return
+      }
+      /* Bounded: a person typing at a dead terminal is a person who will give
+         up, and an unbounded buffer would hold a paste of any size for a socket
+         that may never open. A few hundred keystrokes is far more than anybody
+         types before noticing, and the oldest go first so what survives is what
+         they most recently meant. */
+      waiting.push(data)
+      if (waiting.length > 512) waiting.shift()
+      if (!socket) connect()
     })
 
     /*
