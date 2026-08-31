@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "./dev/fix-spawn-helper.sh",
     "dev": "vite",
     "start": "vite",
     "register": "bun run register.ts",
