@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ModuleContext } from 'roadmap-module-protocol'
+import { useEffect, useState } from 'react'
+import { useRoadmap } from 'roadmap-module-protocol/client/react'
 
-import { connect, type Host } from './wire/host.ts'
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
 import { Button } from '@/components/ui/button'
 
@@ -41,7 +40,6 @@ const ID = 'roadmap.terminal'
  */
 
 export function App() {
-  const [context, setContext] = useState<ModuleContext | null>(null)
   /**
    * Which shell is on screen, as a key.
    *
@@ -53,33 +51,36 @@ export function App() {
    */
   const [shell, setShell] = useState(1)
   const [standing, setStanding] = useState<Standing>({ at: 'opening' })
-  const host = useRef<Host | null>(null)
 
-  useEffect(() => {
-    const live = connect(ID, {
-      onHello: (next) => setContext(next),
-      onContext: (next) => setContext(next),
-      /*
-       * A walk, answered immediately and always with `found: false`.
-       *
-       * There is nothing in a terminal for a reference to land on — it holds a
-       * shell, not a document with anchors. Answering at once rather than
-       * staying silent is the point: the protocol says `goto` is the one place
-       * a host WAITS on a module, and a host's reference index decides between
-       * walking in place and falling back to an ordinary link by whether the
-       * walk found anything. Silence would make every reference pointing here
-       * sit out the host's timeout first.
-       */
-      onGoto: (_goto, answer) => {
-        answer(false, 'A terminal holds a shell, not a document: there is nothing here to walk to.')
-      },
-    })
-    host.current = live
-    return () => {
-      live.stop()
-      host.current = null
-    }
-  }, [])
+  /**
+   * The whole conversation with the host, in one line.
+   *
+   * What used to stand here was `mailbox.ts` and `host.ts` — 418 lines of
+   * handshake, byte-identical to the copy in eleven sibling modules, two of
+   * which had independently grown the same two bugs. It is one import now, and
+   * the essays that explain the orderings live with the code that depends on
+   * them rather than in twelve places that can drift apart.
+   *
+   * Nothing about what this page says on the wire changed: it answers `ready`
+   * to every greeting, refuses every `goto` at once, and asks the host nothing,
+   * because `uses` is empty and a terminal has no questions.
+   */
+  const { context } = useRoadmap(ID, {
+    /*
+     * A walk, answered immediately and always with `found: false`.
+     *
+     * There is nothing in a terminal for a reference to land on — it holds a
+     * shell, not a document with anchors. Answering at once rather than staying
+     * silent is the point: the protocol says `goto` is the one place a host
+     * WAITS on a module, and a host's reference index decides between walking
+     * in place and falling back to an ordinary link by whether the walk found
+     * anything. Silence would make every reference pointing here sit out the
+     * host's timeout first.
+     */
+    onGoto: (_goto, answer) => {
+      answer(false, 'A terminal holds a shell, not a document: there is nothing here to walk to.')
+    },
+  })
 
   /* The theme, applied to the document element rather than a wrapper, because
      the shadcn tokens are defined on `:root` and `.dark`. A class on a div
