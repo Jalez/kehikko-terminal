@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { command, fenced, opening, sayable } from '../shell.ts'
+import { command, fenced, openable, opening, sayable } from '../shell.ts'
 
 /**
  * The fence, tested without a socket.
@@ -113,4 +113,36 @@ describe('what gets run', () => {
     expect(command('/bin/zsh')).toEqual({ file: '/bin/zsh', args: ['-i'] })
   })
 
+})
+
+describe('where a shell opens', () => {
+  /*
+   * The page asks for the open project's folder, so a terminal beside a project
+   * does not begin with the same `cd` every time. What arrives here is still a
+   * string off a socket, and spawning into a directory that is not there fails
+   * from inside the fork: the socket closes with a message about a file, the
+   * container says the shell would not start, and nothing names the path as the
+   * thing that was wrong.
+   */
+  test('the project folder is used when it is a real directory', () => {
+    expect(openable(process.cwd(), '/tmp')).toBe(process.cwd())
+  })
+
+  test('nothing asked for means the fallback', () => {
+    expect(openable(null, '/tmp')).toBe('/tmp')
+  })
+
+  /* The old behaviour, reached rather than crashed into: every shell opened at
+     home before any of this existed, so the fallback is not a new failure. */
+  test('a directory that is not there falls back rather than throwing', () => {
+    expect(openable('/no/such/place/at/all', '/tmp')).toBe('/tmp')
+  })
+
+  test('a file is not a directory', () => {
+    expect(openable(`${process.cwd()}/package.json`, '/tmp')).toBe('/tmp')
+  })
+
+  test('an empty string is treated as nothing asked for', () => {
+    expect(openable('', '/tmp')).toBe('/tmp')
+  })
 })

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
 import { homedir, userInfo } from 'node:os'
 import type { Duplex } from 'node:stream'
@@ -229,6 +230,37 @@ export interface Upgradable {
   ): unknown
 }
 
+/**
+ * Where a shell may actually be opened.
+ *
+ * The page asks for the open project's folder, so that a terminal beside a
+ * project does not begin with the same `cd` every time. What arrives here is
+ * still a string off a socket, and `spawn` with a directory that does not exist
+ * fails in a way nobody can read: node-pty throws from inside the fork, the
+ * socket closes with a message about a file, and the container says the shell
+ * would not start. The path is the thing that was wrong and nothing would have
+ * said so.
+ *
+ * So the answer is checked before it is used, and the fallback is the home
+ * directory — which is where every shell opened before any of this, so falling
+ * back is the old behaviour rather than a new failure.
+ *
+ * It is deliberately NOT confined to a root. The fence around this socket is
+ * the ticket and the origin check in `fenced`, and past those the caller is
+ * this module's own page; a person who can reach it can already type `cd`
+ * anywhere the shell can go. A confinement here would suggest a boundary the
+ * shell itself does not have.
+ */
+export function openable(asked: string | null, fallback = homedir()): string {
+  if (!asked) return fallback
+  try {
+    return statSync(asked).isDirectory() ? asked : fallback
+  } catch {
+    /* Gone, unreadable, or never there. All the same answer. */
+    return fallback
+  }
+}
+
 export function serveTerminals(server: Upgradable, port: number, log: (line: string) => void): void {
   void (async () => {
     const { WebSocketServer } = await import('ws')
@@ -341,11 +373,12 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
         try {
           const nodePty = await import('node-pty')
           const { file, args } = command()
+          const where = openable(said.cwd)
           pty = nodePty.spawn(file, args, {
             name: TERM,
             cols: said.cols,
             rows: said.rows,
-            cwd: said.cwd ?? homedir(),
+            cwd: where,
             env: { ...process.env, TERM },
           })
           pty.onData((chunk: string) => {
@@ -354,7 +387,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
           pty.onExit(({ exitCode }: { exitCode: number }) => {
             if (ws.readyState === ws.OPEN) shut(4000, `the shell exited (${exitCode})`)
           })
-          log(`terminal: a shell in ${said.cwd ?? homedir()}`)
+          log(`terminal: a shell in ${where}`)
         } catch (error: unknown) {
           const why = error instanceof Error ? error.message : String(error)
           log(`terminal: could not start a shell — ${why}`)

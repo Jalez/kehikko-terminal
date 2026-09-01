@@ -65,7 +65,7 @@ export function App() {
    * to every greeting, refuses every `goto` at once, and asks the host nothing,
    * because `uses` is empty and a terminal has no questions.
    */
-  const { context } = useRoadmap(ID, {
+  const { context, where } = useRoadmap(ID, {
     /*
      * A walk, answered immediately and always with `found: false`.
      *
@@ -109,7 +109,22 @@ export function App() {
   return (
     <div className="bg-background text-foreground flex h-dvh min-h-0 flex-col">
       <div className="min-h-0 flex-1">
-        <TerminalView key={shell} theme={theme} onStanding={setStanding} />
+        {/* `at` is where the shell opens, and `settled` is whether anybody has
+            said. A terminal that spawned before the greeting would open in the
+            home directory and then be told where it should have been — and a
+            pty's working directory cannot be changed from out here afterwards
+            without typing into somebody's shell. See `TerminalView`.
+
+            `where !== 'listening'` rather than `context !== null`, so an
+            unframed page — which will never be greeted — opens at home at once
+            instead of waiting forever for a canvas that is not there. */}
+        <TerminalView
+          key={shell}
+          theme={theme}
+          at={context?.projectPath ?? null}
+          settled={where !== 'listening'}
+          onStanding={setStanding}
+        />
       </div>
 
       {dead && (

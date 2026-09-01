@@ -107,11 +107,43 @@ export type Standing =
 
 export function TerminalView({
   theme,
+  at,
+  settled,
   onStanding,
 }: {
   theme: 'light' | 'dark'
+  /**
+   * The open project's folder, or null where there is none.
+   *
+   * A shell that opens in the home directory when the person is looking at a
+   * project is a shell whose first command is always the same `cd`. The canvas
+   * knows where the project is; this is that answer, passed through.
+   */
+  at: string | null
+  /**
+   * Whether the canvas has said anything yet.
+   *
+   * The greeting arrives after this mounts, so a terminal that spawned the
+   * moment it had a size would open in the home directory and then learn where
+   * it should have been — and a pty's working directory cannot be changed
+   * afterwards from out here without typing into somebody's shell. So the spawn
+   * waits for the canvas to have spoken, or for it to be settled that nobody
+   * will. Unframed this is true immediately and the shell opens at home, which
+   * is the only honest answer when nothing has named a project.
+   */
+  settled: boolean
   onStanding?: (standing: Standing) => void
 }) {
+  /* Read inside the effect below, which runs once: putting these in its
+     dependency list would dispose a live terminal and spawn a new shell every
+     time the canvas mentioned a different project, which is the one thing a
+     terminal must never do to somebody mid-command. */
+  const start = useRef<{ at: string | null; settled: boolean }>({ at, settled })
+  start.current = { at, settled }
+
+  /** Set by the effect below, so a late greeting can start a waiting shell. */
+  const wake = useRef<(() => void) | null>(null)
+
   const holder = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const [, setStanding] = useState<Standing>({ at: 'opening' })
@@ -172,6 +204,10 @@ export function TerminalView({
      */
     const usable = () => node.clientWidth > 40 && node.clientHeight > 40
 
+    /* Both conditions, and the second is not about layout: a shell may only be
+       spawned once the canvas has had its say about where. See `settled`. */
+    const ready = () => usable() && start.current.settled
+
     let socket: WebSocket | null = null
 
     const connect = () => {
@@ -188,7 +224,7 @@ export function TerminalView({
         live.send(
           JSON.stringify({
             ticket: ticket(),
-            cwd: null,
+            cwd: start.current.at,
             cols: terminal.cols,
             rows: terminal.rows,
           }),
@@ -268,7 +304,12 @@ export function TerminalView({
          they most recently meant. */
       waiting.push(data)
       if (waiting.length > 512) waiting.shift()
-      if (!socket) connect()
+      /* `ready()` rather than an unconditional connect: a keystroke is proof
+         somebody is looking at this, but not proof the canvas has said where the
+         project is, and a pty's working directory cannot be changed afterwards.
+         What was typed is already in `waiting` and is flushed when the socket
+         opens, so nothing is lost by waiting a moment longer. */
+      if (!socket && ready()) connect()
     })
 
     /*
@@ -283,7 +324,7 @@ export function TerminalView({
       /* The first observation with a real size is what starts the shell. After
          that this is only the resize path. */
       if (!socket) {
-        if (usable()) connect()
+        if (ready()) connect()
         return
       }
       /*
@@ -318,9 +359,18 @@ export function TerminalView({
     /* A container that was already laid out when this mounted — the common case
        once a canvas is settled — has its size now and should not wait for an
        observation that may not come. */
-    if (usable()) connect()
+    if (ready()) connect()
+
+    /* The canvas usually speaks before the container has a size, in which case
+       the observation above starts the shell. When it is the other way round —
+       laid out first, greeted after — nothing else would fire, so the effect on
+       `settled` below calls this. */
+    wake.current = () => {
+      if (ready()) connect()
+    }
 
     return () => {
+      wake.current = null
       resized.disconnect()
       typing.dispose()
       /* Closed before the terminal is disposed, so no late frame can arrive for
@@ -338,6 +388,17 @@ export function TerminalView({
   useEffect(() => {
     if (term.current) term.current.options.theme = palette(theme)
   }, [theme])
+
+  /*
+   * The canvas has spoken: start the shell if it was only waiting for that.
+   *
+   * Separate from the effect that builds the terminal, and deliberately so —
+   * putting `settled` in that effect's dependencies would dispose a live
+   * emulator and spawn a second shell the moment the greeting arrived.
+   */
+  useEffect(() => {
+    if (settled) wake.current?.()
+  }, [settled])
 
   return <div ref={holder} className="h-full w-full" />
 }
