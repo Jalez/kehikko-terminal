@@ -67,6 +67,36 @@ import '@xterm/xterm/css/xterm.css'
  * the command that produced them, so the next person does not spend the
  * afternoon in Chromium finding nothing — which is where this one started, and
  * Chromium and Playwright's headed WebKit both paint every keystroke on time.
+ *
+ * ## "Scrolling doesn't seem to work at all", which was measured and is not here
+ *
+ * Reported once, and worth writing down BECAUSE nothing was changed: the next
+ * person to read that sentence should start from what has already been ruled
+ * out rather than from the beginning.
+ *
+ * `dev/scroll-probe.mjs` takes the sentence apart into the failures it could be
+ * — the wheel doing nothing, the viewport snapping back, no scrollbar, no
+ * scrollback to reach, an ancestor scrolling instead — and asserts each one
+ * separately, standalone and framed. All of them pass: the wheel moves the
+ * view, it stays where it is put while the pty keeps producing, the slider is
+ * drawn and moves, and Shift+PageUp walks back to the first prompt. Measured in
+ * Chromium headless and headed, at device pixel ratios 1 and 2, in WebKit and
+ * in Firefox, and framed inside the host's frames layer — where the
+ * `overflow: hidden` on the frame and the `pointer-events` juggling on the
+ * layer are, and where neither turned out to matter, because a wheel over an
+ * iframe is delivered to the framed document and the host has no `wheel`
+ * listener anywhere.
+ *
+ * There is exactly one state in which the wheel is genuinely dead, and it is
+ * the emulator doing what a terminal is supposed to do: a program that has
+ * turned on mouse tracking with wheel reporting is SENT the wheel instead of
+ * scrolling the view — `Viewport` sets `handleMouseWheel: false` while that
+ * protocol is active — and the alternate screen has no scrollback to reach.
+ * Both come back on their own when the program turns them off. What does not
+ * come back is a program that DIED without turning them off, which leaves a
+ * terminal whose wheel does nothing until something resets it. If the sentence
+ * is reported again, that is the first thing to ask about; `reset` in the
+ * terminal is the test, and it costs nothing.
  */
 
 /** What the page was served, minted once per process. See `page.ts`. */
