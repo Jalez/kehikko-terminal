@@ -20,6 +20,24 @@ import './index.css'
  */
 import 'roadmap-module-protocol/client'
 import { App } from './app.tsx'
+import { watchThisPage } from './view/trace.ts'
+
+/**
+ * Started from the entry, and not from the terminal view, because it has to
+ * survive the view.
+ *
+ * "Clicking New shell doesn't fix it either" means the thing that stopped is
+ * not the shell, the socket or the emulator — all three are replaced by that
+ * press. It is something at the level of this page. A tracer that lived inside
+ * `TerminalView` would be torn down and rebuilt by exactly the press whose
+ * effect is being measured, and would report a healthy new one every time while
+ * the sick old one went unmentioned.
+ *
+ * So this runs once per document, counts what the views mount and release, and
+ * posts it to the server every couple of seconds — where `curl` can read it
+ * while the page in front of somebody is stuck. See `src/view/trace.ts`.
+ */
+watchThisPage()
 
 const root = document.getElementById('root')
 if (root) {

@@ -4,6 +4,8 @@ import type { IncomingMessage } from 'node:http'
 import { homedir, userInfo } from 'node:os'
 import type { Duplex } from 'node:stream'
 
+import * as trace from './trace.ts'
+
 /**
  * A real terminal, and the fence in front of it.
  *
@@ -228,6 +230,17 @@ export interface Upgradable {
     event: 'upgrade',
     listener: (request: IncomingMessage, socket: Duplex, head: Buffer) => void,
   ): unknown
+  /**
+   * Optional, and read only by the trace.
+   *
+   * Every `EventEmitter` has it and nothing here needs it to work, so it is
+   * declared optional rather than required: a server that does not have it
+   * gets a zero on the report instead of a crash, which is the right trade for
+   * a diagnostic. What it answers is whether TWO terminals have attached
+   * themselves to one HTTP server — which an HMR reload of this plugin would
+   * do, and which degrades the way "it gets worse after a while" describes.
+   */
+  listenerCount?(event: string): number
 }
 
 /**
@@ -277,6 +290,7 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
         port,
       )
       if (!gate.ok) {
+        trace.refused(gate.why)
         log(`terminal: refused an upgrade — ${gate.why}`)
         /* A bare 403 and no websocket. The reason is logged here and not sent:
            the caller failed a check about who it is, and telling it which check
@@ -286,10 +300,25 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
         return
       }
 
+      trace.accepted()
       sockets.handleUpgrade(request, socket, head, (ws) => {
         void hold(ws, log)
       })
     })
+
+    /*
+     * How many `upgrade` listeners this server carries, read at report time.
+     *
+     * One. If it is ever two, something has attached a second terminal to the
+     * same HTTP server — an HMR reload of this plugin would do it — and the
+     * symptom of that is two handlers racing to answer one handshake, which
+     * degrades exactly the way "it gets worse after a while" describes. It is
+     * a single number on the report and it costs nothing until asked.
+     */
+    trace.attached()
+    trace.watchListeners(() => server.listenerCount?.('upgrade') ?? 0)
+    trace.beat()
+    trace.note('server', `the terminal socket is listening on ${port}`)
 
     log(`terminal: ready on ws://127.0.0.1:${port}/terminal`)
   })().catch((error: unknown) => {
@@ -309,6 +338,23 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
  */
 async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Promise<void> {
   let pty: import('node-pty').IPty | null = null
+
+  /*
+   * The record of this one connection, opened HERE rather than at spawn.
+   *
+   * A socket that connects and never says its ticket, and a socket that says it
+   * and gets no shell, are both states somebody would report as a freeze — and
+   * a record that only came into being once a pty existed could describe
+   * neither. The readyState and the send buffer are handed over as functions so
+   * they are read when the report is rendered rather than sampled on a timer:
+   * a `bufferedAmount` that only rises between samples is the transport failure
+   * this workspace keeps meeting, and it is worth seeing exactly.
+   */
+  const held = trace.connected(
+    () =>
+      ['connecting', 'open', 'closing', 'closed'][ws.readyState] ?? String(ws.readyState),
+    () => ws.bufferedAmount,
+  )
 
   /* Closing must not be able to throw. Every call goes through here, because
      this is a `ws` handler and an exception in one reaches the top of the
@@ -333,6 +379,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
 
   const stop = () => {
     clearTimeout(silent)
+    trace.reaped(held)
     if (!pty) return
     const doomed = pty
     pty = null
@@ -365,6 +412,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
       clearTimeout(silent)
       const said = opening(text)
       if (typeof said === 'string') {
+        trace.note('socket', `#${held.n} the opening frame was refused — ${said}`)
         log(`terminal: ${said}`)
         shut(4403, said)
         return
@@ -381,15 +429,31 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
             cwd: where,
             env: { ...process.env, TERM },
           })
+          trace.spawned(held, pty.pid, where, said.cols, said.rows)
           pty.onData((chunk: string) => {
-            if (ws.readyState === ws.OPEN) ws.send(chunk)
+            /*
+             * The hot path, and the whole cost of the tracer on it is two
+             * increments, a `Date.now()` and a `bufferedAmount` read. No string
+             * is built, nothing is allocated, and the chunk itself is never
+             * kept — see the essay in `trace.ts` on why the bytes are not a
+             * thing to record.
+             *
+             * `delivered` is the interesting half: a chunk the pty produced
+             * that was NOT handed to the socket is output the person will never
+             * see, and until now it left no trace anywhere.
+             */
+            const alive = ws.readyState === ws.OPEN
+            if (alive) ws.send(chunk)
+            trace.fromPty(held, chunk.length, ws.bufferedAmount, alive, chunk)
           })
           pty.onExit(({ exitCode }: { exitCode: number }) => {
+            trace.exited(held, exitCode)
             if (ws.readyState === ws.OPEN) shut(4000, `the shell exited (${exitCode})`)
           })
           log(`terminal: a shell in ${where}`)
         } catch (error: unknown) {
           const why = error instanceof Error ? error.message : String(error)
+          trace.wouldNotStart(held, why)
           log(`terminal: could not start a shell — ${why}`)
           shut(4500, 'a shell could not be started on this machine')
         }
@@ -424,6 +488,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
     const frame = said as Record<string, unknown>
 
     if (typeof frame.d === 'string') {
+      trace.toPty(held, frame.d.length)
       pty.write(frame.d)
       return
     }
@@ -434,6 +499,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
       const rows = Math.min(200, Math.max(5, Math.trunc(Number(size.rows) || 24)))
       try {
         pty.resize(cols, rows)
+        trace.resized(held, cols, rows)
       } catch {
         /* A resize the pty refuses is dropped. The alternative is closing
            somebody's shell because a number arrived wrong. */
@@ -441,6 +507,12 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
     }
   })
 
-  ws.on('close', stop)
-  ws.on('error', stop)
+  ws.on('close', (code: number, reason: Buffer) => {
+    trace.closed(held, reason.length > 0 ? reason.toString('utf8') : `code ${code}`)
+    stop()
+  })
+  ws.on('error', (error: Error) => {
+    trace.closed(held, error.message)
+    stop()
+  })
 }

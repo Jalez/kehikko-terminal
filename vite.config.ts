@@ -70,8 +70,13 @@ function doors(): Plugin {
         const path = url.pathname
         const method = (request.method ?? 'GET').toUpperCase()
 
-        const send = (status: number, body: unknown) => {
+        const send = (status: number, body: unknown, type: 'json' | 'text' = 'json') => {
           response.statusCode = status
+          if (type === 'text') {
+            response.setHeader('content-type', 'text/plain; charset=utf-8')
+            response.end(String(body))
+            return
+          }
           response.setHeader('content-type', 'application/json; charset=utf-8')
           response.end(JSON.stringify(body, null, 2))
         }
@@ -110,9 +115,61 @@ function doors(): Plugin {
         const ours = path === '/healthz' || path.startsWith('/api/')
         if (!ours) return next()
 
-        const reply = answer(method, path)
+        const json = url.searchParams.has('json')
+
+        /*
+         * The one door with a body, read here rather than in `doors.ts`.
+         *
+         * `doors.ts` stays a pure function of what a request SAID — that is
+         * what makes its decisions testable without a server — so the reading
+         * off the socket happens where the socket is.
+         *
+         * Bounded at 64 KB, and the bound is not decoration: this is a door
+         * that appends to a ring buffer this process keeps, and a body with no
+         * ceiling would be a way to make a diagnostic into the memory problem
+         * it was built to find. A page's own beacon is around half a kilobyte.
+         */
+        if (method === 'POST') {
+          let read = 0
+          const parts: Buffer[] = []
+          let refused = false
+          request.on('data', (part: Buffer) => {
+            if (refused) return
+            read += part.length
+            if (read > 64 * 1024) {
+              refused = true
+              send(413, { ok: false, error: 'That body is larger than this module reads.' })
+              request.destroy()
+              return
+            }
+            parts.push(part)
+          })
+          request.on('end', () => {
+            if (refused) return
+            let body: unknown
+            let ticket: string | undefined
+            try {
+              const held: unknown = JSON.parse(Buffer.concat(parts).toString('utf8'))
+              if (typeof held === 'object' && held !== null) {
+                const it = held as Record<string, unknown>
+                body = it.standing
+                ticket = typeof it.ticket === 'string' ? it.ticket : undefined
+              }
+            } catch {
+              /* Not JSON. Falls through to the door, which refuses it — and
+                 refuses it with the same sentence as a wrong ticket, so a
+                 caller cannot use the shape of the reply to learn anything. */
+            }
+            const said = answer(method, path, { json, body, ticket })
+            if (!said) return next()
+            send(said.status, said.body, said.type)
+          })
+          return
+        }
+
+        const reply = answer(method, path, { json })
         if (!reply) return next()
-        send(reply.status, reply.body)
+        send(reply.status, reply.body, reply.type)
       })
     },
   }

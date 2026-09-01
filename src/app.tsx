@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRoadmap } from 'roadmap-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
+import { note } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
 
 const ID = 'roadmap.terminal'
@@ -130,7 +131,28 @@ export function App() {
       {dead && (
         <div className="flex items-center justify-between gap-2 border-t px-2 py-1">
           <span className="text-muted-foreground truncate text-[11px]">{standing.why}</span>
-          <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-xs" onClick={() => setShell((n) => n + 1)}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 px-2 text-xs"
+            onClick={() => {
+              /* Recorded, because pressing this is the single most informative
+                 thing somebody does while the container is stuck. "Clicking New
+                 shell doesn't fix it either" rules out the shell, the pty and
+                 the socket all at once — but only if the trace can show that
+                 the press HAPPENED, that a second shell really started, and
+                 that its bytes arrived and still did not appear. Without this
+                 line the report cannot tell a press that did nothing from a
+                 press that never landed.
+
+                 Worth knowing while reading a report: this button only exists
+                 while `standing.at === 'closed'`. If somebody was able to press
+                 it, the socket had already ended — which is itself a fact about
+                 the freeze, and the ring above will say what closed it. */
+              note('somebody pressed New shell')
+              setShell((n) => n + 1)
+            }}
+          >
             New shell
           </Button>
         </div>

@@ -98,6 +98,92 @@ to expose because it was convenient once.
 
 ---
 
+## The terminal froze. It is stuck, hung, frozen, not responding, not updating
+
+Run this. It works while the terminal in front of you is still stuck, and it
+does not need the frozen container to cooperate:
+
+```bash
+curl -s 127.0.0.1:7920/api/trace
+```
+
+That prints what every layer of this module was doing in the seconds before you
+ran it. Read the first block downwards and **stop at the first line whose
+freshness is old** — the freeze is between that line and the one above it.
+
+```
+terminal — trace at 2026-09-02T09:11:12.345Z, this process up 41m12s
+
+the layers, newest first. read down until the freshness stops.
+  page       last said something 0.8s ago (1204 times)
+             frames: 900 landed, last 22.0s ago, worst wait 22.0s
+             *** a requested animation frame has been outstanding for 22.0s. The page is running and NOT drawing.
+                 document.visibilityState is "visible" — a visible page that will not draw is the
+                 WKWebView case; see rendering.rs in kehikko-desktop.
+             worst timer lag 30ms, visibility visible, up 41m01s
+             xterm: 40 writes, 31 renders, last render 22.0s ago
+             received 7.9 KB in 40 messages, 12 keystrokes, 0 buffered
+             live now: 1 view, 1 emulator, 1 socket, 1 observer  (ever: 3/2 views, 3/2 emulators, 3/2 sockets)
+  transport  1 open, 3 opened, 2 closed, 0 refused
+             this module has attached 1 time; the server carries 2 upgrade listeners in all
+  server     ticked 2472 times, last 0.4s ago, worst lag 3ms, rss 145.2 MB
+  shells     1 live, 3 spawned, 2 exited, 0 would not start
+
+every shell this process has held, newest first
+  #3  pid 51234  132x40  live for 4.1s
+      in /Users/you/Projects/thing
+      pty -> page   812 B in 9 chunks, last 0.2s ago
+      page -> pty   14 B in 7 frames, last 1.1s ago
+      socket        open, buffered 0 B (high 0 B), 9 sends, 0 dropped
+
+the last 37 things that happened, oldest first
+  09:10:48.9  page    somebody pressed New shell
+  09:10:49.0  pty     #3 a shell started, pid 51234, 132x40, in /Users/you/Projects/thing
+  09:10:51.9  page    an animation frame took 22.0s to arrive; the page was visible for it
+  ...
+```
+
+### What each answer means
+
+| What the report says | Which layer stopped | Where to go next |
+|---|---|---|
+| `page has never reported` | The container is not open, or its JavaScript died before it could speak once | Is the module framed at all? Look for an error in the host's console |
+| `page last said something 40s ago` | The **page entirely** — main thread wedged, or the frame was torn out | The page, not this module's server. Nothing here will help |
+| `an animation frame has been outstanding for 22.0s` and beacons still arriving | The **render loop**. The page runs and does not draw | If `visibilityState` is `hidden`, that is allowed. If `visible`, it is the WKWebView case — check `_setWindowOcclusionDetectionEnabled` in `kehikko-desktop/src-tauri/src/rendering.rs` |
+| `writes` climbing while `renders` does not | xterm parsed it and never drew it | Same place as above; the write path and the render path are different things |
+| `the send buffer is not draining` | The **transport**. Open at this end, dead at the other | The socket. A half-open websocket is this workspace's recurring shape |
+| `pty -> page … last 40.0s ago` while everything above is fresh | The **shell**. It is blocked, or genuinely printing nothing | `ps` the pid the report prints |
+| `the heartbeat is stale` | This **server**'s event loop is not turning | This process. Nothing above it is at fault |
+| `more than one of something is live` | Something **accumulated** across a remount | An emulator, socket or observer that a `New shell` press left behind |
+| `this module attached to the server more than once` | Two terminal handlers racing for one handshake | An HMR reload of the Vite plugin. Restart the module |
+
+`curl -s '127.0.0.1:7920/api/trace?json'` gives the same numbers as JSON.
+
+### What it costs when nothing is wrong
+
+One `setInterval` at 1Hz in the server and one in the page; one animation frame
+per second (not a rAF loop — see the essay in `src/view/trace.ts`); one ~0.5 KB
+`fetch` to loopback every two seconds while a container is open. On the hot paths — a
+chunk out of the pty, a keystroke in, a message into the page — two integer
+increments and no allocation. Buffers are bounded at 400 events and 12 shells,
+so the tracer cannot become the leak it was built to find.
+
+### What it does not record
+
+**Not the contents of your terminal.** Sizes, counts, timings, pids and the
+directory each shell opened in — nothing that was typed and nothing that was
+printed. `TERMINAL_TRACE_BYTES=1` turns on a 60-byte-per-chunk content trace for
+the case where a freeze turns out to be an escape sequence the emulator choked
+on; it is off, it is deliberate to set, and every report says loudly while it is
+on.
+
+`GET /api/trace` carries no ticket, because the one command a person runs while
+their terminal is stuck has to work when the page holding the ticket is the
+frozen half. `POST /api/trace/page` — how the page reports itself — does carry
+it. The argument for that asymmetry is written out in `doors.ts`.
+
+---
+
 ## Three bugs worth knowing about
 
 All found by measuring. None visible to `tsc` or `bun test`.
@@ -175,7 +261,23 @@ PASS  a dead shell offers a new one, and it really starts
 The process group really dies with the socket — a backgrounded `sleep` started
 in the container was gone from `pgrep` after the socket closed.
 
-`bun run typecheck` clean. `bun test` 15 pass.
+`bun run typecheck` clean. `bun test` 46 pass.
+
+The trace, against a real running module and a real shell (`node dev/trace-probe.mjs 7920`):
+
+```
+PASS  a shell was spawned and its pid recorded
+PASS  the pty produced bytes and the trace counted them
+PASS  every one of them was handed to the socket
+PASS  the page half of the count matches what arrived here
+PASS  what was typed was counted going in
+PASS  the resize reached the record
+PASS  the socket is reported open and drained
+PASS  one shell is live
+PASS  this module attached to the server exactly once
+PASS  the server heartbeat is turning
+PASS  the counts came back down when the socket closed
+```
 
 ```
 curl -sI -H 'Origin: https://evil.example' /app | grep -i access-control
@@ -187,5 +289,15 @@ curl -sI -H 'Origin: https://evil.example' /app | grep -i access-control
 - **Framed by the real host on 4181.** The module is registered and reports
   `ready`, and it was framed from its own origin and greeted by a probe speaking
   the protocol — but no canvas has held it through a working session.
+- **The trace against a real freeze.** Every layer of it is measured
+  separately — the server half against a live shell, the page half against
+  `happy-dom` — and the report has been read for each shape it is meant to name.
+  What has not happened is the thing it was built for: nobody has yet had the
+  terminal freeze with this running and read the answer. Until that happens it
+  is a well-tested instrument and not yet an explanation.
+- **The page half in the desktop shell.** The rAF probe and the beacon are
+  exercised under `happy-dom`, which cannot stop serving frames. WKWebView can,
+  and that is exactly the case being watched for; `dev/frozen-while-backgrounded.js`
+  is the instrument for it.
 - **Anything but macOS + arm64.** The `spawn-helper` chmod covers Linux prebuild
   layouts too, but only darwin-arm64 has been run.

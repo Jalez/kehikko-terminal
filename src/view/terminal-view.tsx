@@ -3,6 +3,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
+import { ticket } from './ticket.ts'
+import { note, seen } from './trace.ts'
+
 /**
  * The terminal itself: xterm in the page, a pty on the other end of a socket.
  *
@@ -68,6 +71,28 @@ import '@xterm/xterm/css/xterm.css'
  * afternoon in Chromium finding nothing — which is where this one started, and
  * Chromium and Playwright's headed WebKit both paint every keystroke on time.
  *
+ * ## And the reason this file now counts things
+ *
+ * That fix landed and the sentence came back a third time, with two new facts:
+ * it gets worse "after the terminal has been running for a while", and pressing
+ * **New shell does not bring it back**. The second one is the useful one. A new
+ * shell is a new pty, a new child, a new socket and — because the parent bumps
+ * `key` — a brand new emulator and a brand new one of everything in this file.
+ * If none of that helps, then whatever stopped is not any of those: it is
+ * something that OUTLIVES a remount.
+ *
+ * There are only a few candidates for that, and every one of them is a thing
+ * this file might have failed to release: an emulator that was not disposed, a
+ * `ResizeObserver` still observing a detached node, a socket still open, an
+ * `onData` listener still attached. So each of them is now counted in and
+ * counted out, and `/api/trace` prints how many are LIVE. Two views live at
+ * once is not a theory about the bug; it is the bug, stated.
+ *
+ * The counts are paired with this effect's cleanup deliberately — `seen.x()` on
+ * the way in and `seen.xGone()` in the returned function — so that a future
+ * edit which forgets to release something also makes the number wrong, and the
+ * number is on a report somebody reads. See `src/view/trace.ts`.
+ *
  * ## "Scrolling doesn't seem to work at all", which was measured and is not here
  *
  * Reported once, and worth writing down BECAUSE nothing was changed: the next
@@ -98,22 +123,6 @@ import '@xterm/xterm/css/xterm.css'
  * is reported again, that is the first thing to ask about; `reset` in the
  * terminal is the test, and it costs nothing.
  */
-
-/** What the page was served, minted once per process. See `page.ts`. */
-function ticket(): string {
-  const tag = document.getElementById('terminal-ticket')
-  if (!tag?.textContent) return ''
-  try {
-    const held: unknown = JSON.parse(tag.textContent)
-    return typeof held === 'string' ? held : ''
-  } catch {
-    /* Louder than a silent empty string, but only in the console: the page
-       still renders and the socket still refuses, which is the sentence the
-       person needs and it is already on screen. */
-    console.error('terminal: the ticket in this page is not a JSON string')
-    return ''
-  }
-}
 
 /**
  * xterm's palette, which does NOT follow the page's CSS.
@@ -193,6 +202,17 @@ export function TerminalView({
     const node = holder.current
     if (!node) return
 
+    /* Counted here and released in this effect's cleanup, so that the report
+       can answer the one question a remount raises: is the OLD one still
+       alive? "Clicking New shell does not fix it" is exactly the shape of a
+       view that was replaced without being released, and a count is the only
+       thing that can tell that from a view that was replaced cleanly.
+
+       Under StrictMode these run twice on mount in development — mounted 2,
+       disposed 1, live 1 — which is React proving the cleanup works. `live` is
+       the number to read; the totals are not a defect count. */
+    seen.viewMounted()
+
     const terminal = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 12,
@@ -205,6 +225,18 @@ export function TerminalView({
     terminal.loadAddon(fit)
     terminal.open(node)
     term.current = terminal
+    seen.emulatorMade()
+
+    /* What xterm ACTUALLY drew, as distinct from what it was handed.
+       `terminal.write()` parses into the buffer without touching the screen;
+       the render is a separate thing behind a `RenderDebouncer` and an
+       animation frame, and the reported freeze is precisely the case where the
+       first keeps happening and the second stops. Two counters that diverge
+       name that instantly; one counter could not. It fires per render, not per
+       byte, so it costs a single increment at the rate the screen changes. */
+    const drawn = terminal.onRender(() => {
+      seen.rendered()
+    })
 
     /*
      * Nothing is spawned until this container has a real width.
@@ -245,10 +277,15 @@ export function TerminalView({
       try {
         fit.fit()
       } catch {
+        /* Measured while being laid out. Worth a line, because a terminal that
+           never connects looks exactly like a terminal that froze, and this is
+           one of the two ways to reach that state without an error anywhere. */
+        note('a fit threw while connecting, so no socket was opened yet')
         return
       }
       const live = new WebSocket(`ws://${location.host}/terminal`)
       socket = live
+      seen.socketOpening()
 
       live.onopen = () => {
         live.send(
@@ -270,18 +307,37 @@ export function TerminalView({
     }
 
     function wire(live: WebSocket) {
+      /* One close per socket, whatever order the browser delivers `error` and
+         `close` in. Without this the live count would go negative on a failed
+         connection, and a counter that can lie is worse than no counter. */
+      let ended = false
+
       /* Output, straight through. Never parsed — it is a byte stream from a
          program, and the moment this side starts looking for structure in it, a
          program that prints JSON becomes a program that can talk to this page. */
       live.onmessage = (event: MessageEvent) => {
-        terminal.write(typeof event.data === 'string' ? event.data : '')
+        const data = typeof event.data === 'string' ? event.data : ''
+        /* Sizes, never contents. What comes out of somebody's shell is their
+           session; see the essay in `trace.ts`. */
+        seen.message(data.length)
+        terminal.write(data)
+        seen.written()
       }
 
       live.onclose = (event: CloseEvent) => {
-        move({ at: 'closed', why: event.reason || 'the connection ended' })
+        const why = event.reason || 'the connection ended'
+        if (!ended) {
+          ended = true
+          seen.socketClosed(why)
+        }
+        move({ at: 'closed', why })
       }
 
       live.onerror = () => {
+        if (!ended) {
+          ended = true
+          seen.socketClosed('the connection could not be made')
+        }
         /* No detail available by design — the browser does not tell a page why
            a socket failed, precisely so a page cannot use it to probe. Say the
            true and useless thing rather than inventing a specific one. */
@@ -324,6 +380,7 @@ export function TerminalView({
 
     const typing = terminal.onData((data: string) => {
       if (socket && socket.readyState === WebSocket.OPEN) {
+        seen.keystroke(waiting.length)
         socket.send(JSON.stringify({ d: data }))
         return
       }
@@ -334,6 +391,14 @@ export function TerminalView({
          they most recently meant. */
       waiting.push(data)
       if (waiting.length > 512) waiting.shift()
+      /* A keystroke count and a buffer depth, never the keystroke. Counted on
+         BOTH paths — the one that sends and the one that buffers — because a
+         count that only rose when nothing was sent would go quiet in exactly
+         the case a reader most wants to see: somebody typing at a terminal that
+         is answering. A `waiting` that only grows is a terminal accepting
+         typing and sending none of it, which is one of the things people call a
+         freeze. */
+      seen.keystroke(waiting.length)
       /* `ready()` rather than an unconditional connect: a keystroke is proof
          somebody is looking at this, but not proof the canvas has said where the
          project is, and a pty's working directory cannot be changed afterwards.
@@ -385,6 +450,7 @@ export function TerminalView({
       }
     })
     resized.observe(node)
+    seen.observerMade()
 
     /* A container that was already laid out when this mounted — the common case
        once a canvas is settled — has its size now and should not wait for an
@@ -402,12 +468,16 @@ export function TerminalView({
     return () => {
       wake.current = null
       resized.disconnect()
+      seen.observerGone()
+      drawn.dispose()
       typing.dispose()
       /* Closed before the terminal is disposed, so no late frame can arrive for
          an emulator that is gone. A container unmounted before it was ever wide
          enough has no socket to close. */
       socket?.close()
       terminal.dispose()
+      seen.emulatorDisposed()
+      seen.viewDisposed()
       term.current = null
     }
     /* The theme is deliberately NOT a dependency: a theme change must not
