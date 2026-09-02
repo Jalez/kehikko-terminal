@@ -79,7 +79,12 @@ describe('the report names the layer that stopped', () => {
     )
     const alive = report()
     expect(alive).toContain('outstanding for 22.0s')
-    expect(alive).toContain('The page is running and NOT drawing')
+    expect(alive).toContain('The window is not serving this frame')
+    /* And it says what a visible frame on a ten-second schedule IS, and what to
+       read next, because the last three people to read this line each spent an
+       afternoon guessing. */
+    expect(alive).toContain('outside the viewport')
+    expect(alive).toContain('drawn without waiting')
 
     /* And the OTHER freeze, which is the page saying nothing at all. That one
        is not in the beacon; it is the age of the beacon, which is why the page
@@ -239,6 +244,10 @@ function plain() {
     lastRenderAgo: 20 as number | null,
     keystrokes: 5,
     waiting: 0,
+    driven: 0,
+    onScreen: 1,
+    focus: true,
+    size: [1180, 620] as [number, number],
     noted: [] as { at: number; what: string }[],
   }
 }

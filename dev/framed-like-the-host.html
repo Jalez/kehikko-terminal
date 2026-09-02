@@ -1,0 +1,99 @@
+<!doctype html>
+<!--
+  The terminal, framed exactly the way the host frames it, and nothing else.
+
+  This page is the instrument for the case where the terminal is VISIBLE and
+  still only paints every ten seconds — see dev/frame-throttle-probe.sh for how
+  it is driven and what it measured. The host positions every module's page in
+  one flat layer inside a scrolling <main>: an absolutely positioned wrapper,
+  overflow hidden, moved into place with a CSS transform. That geometry is what
+  WebKit reads when it decides whether a subframe is "outside the viewport",
+  so it is reproduced here to the class, and every part of it can be switched
+  off from the query string to find which one WebKit trips on:
+
+    ?transform=0   position the wrapper with left/top instead of translate()
+    ?overflow=0    no overflow:hidden on the wrapper
+    ?scroll=0      <main> overflow visible instead of auto
+    ?plain=1       a bare <iframe> in normal flow, the control
+    ?late=800      what the host really does on load: the wrapper starts at
+                   width 0, height 0, visibility hidden — Frames.tsx has no
+                   rect until the container's body has been measured — and is
+                   given its size, its transform and its visibility 800ms later
+    ?away=1        the frame placed 5000px down a canvas three screens tall,
+                   genuinely off screen, which is the one arrangement in which
+                   WebKit provably applies its "outside the viewport" treatment
+                   — one animation frame per ten seconds, timers on a one-second
+                   grid. The user's window applies it to a frame they can see;
+                   this is how the module's answer to it is measured.
+    ?wiggle=2000   resize the wrapper by 20px every 2000ms. Each resize makes
+                   xterm ask for a render without a byte of output, so the
+                   trace's `renders` count says whether rows are being drawn:
+                   once per wiggle if they are, once per ten seconds if not.
+    ?down=300      a canvas taller than the window, scrolled down by 300px,
+                   with the frame placed where the host would put it after
+                   that scroll (the host adds scrollTop into the translate)
+
+  The module under test must be running on 127.0.0.1:7925 (its port is in the
+  src below), started with ROADMAP_ORIGIN set to this page's origin so its
+  frame-ancestors policy admits it.
+-->
+<meta charset="utf-8">
+<title>framed like the host</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui; }
+  .shell { display: flex; height: 100vh; flex-direction: column; overflow: hidden; }
+  .bar { height: 40px; background: #ddd; padding: 8px; box-sizing: border-box; }
+  main { position: relative; min-height: 0; flex: 1; overflow: auto; }
+  .grid { height: 100%; }
+  .layer { pointer-events: none; position: absolute; inset: 0; }
+  .frame { position: absolute; top: 0; left: 0; overflow: hidden; border-radius: 0 0 8px 8px; pointer-events: auto; }
+  iframe { height: 100%; width: 100%; border: 0; background: white; display: block; }
+</style>
+<body>
+<script>
+  const q = new URLSearchParams(location.search)
+  const off = (k) => q.get(k) === '0'
+  const src = 'http://127.0.0.1:7925/app'
+  const sandbox = 'allow-scripts allow-forms allow-popups allow-same-origin'
+  const frame = () =>
+    `<iframe title="Terminal" src="${src}" sandbox="${sandbox}" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>`
+  if (q.get('plain') === '1') {
+    document.body.innerHTML = `<div style="width:900px;height:500px">${frame()}</div>`
+  } else {
+    const down = Number(q.get('down') ?? 0)
+    const away = q.get('away') === '1'
+    const y = away ? 5000 : 100 + down
+    const place = off('transform') ? `left:80px;top:${y}px` : `transform:translate(80px,${y}px)`
+    const clip = off('overflow') ? 'overflow:visible' : ''
+    const late = Number(q.get('late') ?? 0)
+    /* Exactly the inline style Frames.tsx gives a frame whose container has
+       no rect yet: translated to 0,0, no size, hidden. */
+    const unmeasured = 'transform:translate(0px,0px);width:0px;height:0px;visibility:hidden'
+    document.body.innerHTML = `
+      <div class="shell">
+        <div class="bar">${location.search || '(the host’s shape)'}</div>
+        <main style="${off('scroll') ? 'overflow:visible' : ''}">
+          <div class="grid" style="${down || away ? 'height:300vh' : ''}"></div>
+          <div class="layer">
+            <div class="frame" style="${late ? unmeasured : `${place};${clip};width:900px;height:500px`}">${frame()}</div>
+          </div>
+        </main>
+      </div>`
+    if (down) document.querySelector('main').scrollTop = down
+    if (late) {
+      setTimeout(() => {
+        const wrapper = document.querySelector('.frame')
+        wrapper.style.cssText = `${place};${clip};width:900px;height:500px;visibility:visible`
+      }, late)
+    }
+    const wiggle = Number(q.get('wiggle') ?? 0)
+    if (wiggle) {
+      let wide = true
+      setInterval(() => {
+        wide = !wide
+        document.querySelector('.frame').style.width = wide ? '900px' : '880px'
+      }, wiggle)
+    }
+  }
+</script>
+</body>

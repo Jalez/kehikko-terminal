@@ -1,3 +1,4 @@
+import { framesDriven, requestRealFrame } from './frames.ts'
 import { ticket } from './ticket.ts'
 
 /**
@@ -78,6 +79,21 @@ const counts = {
 let lastFrameAt: number | null = null
 let frameAskedAt: number | null = null
 let lastRenderAt: number | null = null
+
+/**
+ * How much of this frame the browser itself says is on screen, 0 to 1, or -1
+ * before it has said anything.
+ *
+ * From an `IntersectionObserver` against the top-level viewport, which is the
+ * one thing a page inside a cross-origin iframe is allowed to know about where
+ * it is. It is here because the freeze this file exists for turned out to be
+ * WebKit treating a frame the person could see as "outside the viewport" (see
+ * `frames.ts`). WebKit's observer and WebKit's throttling compute that from
+ * different code, so the report can now print the two side by side: a frame
+ * drawn once every ten seconds while this says 100% is the bug, stated in its
+ * own numbers.
+ */
+let onScreen = -1
 
 let noted: { at: number; what: string }[] = []
 
@@ -177,6 +193,13 @@ export function standingNow() {
     lastRenderAgo: lastRenderAt === null ? null : now - lastRenderAt,
     keystrokes: counts.keystrokes,
     waiting: counts.waiting,
+    /* The frame that was owed: how many draws the window did not do, how much
+       of this frame the browser says is on screen, and the two facts about the
+       window a person switching apps changes. See `frames.ts`. */
+    driven: framesDriven(),
+    onScreen,
+    focus: typeof document === 'undefined' ? false : document.hasFocus(),
+    size: (typeof window === 'undefined' ? [0, 0] : [window.innerWidth, window.innerHeight]) as [number, number],
     noted: noted.slice(0, CARRIED),
   }
 }
@@ -189,13 +212,16 @@ export function standingNow() {
  * has been waiting. A second request is not made while one is outstanding —
  * queueing frames at a page that is not drawing would be piling work on the
  * exact thing that is stuck, and the first one answers the question anyway.
+ *
+ * Asked of the window's REAL `requestAnimationFrame`, not the one `frames.ts`
+ * puts in its place. The replacement answers from a timer when the window
+ * will not, which is right for xterm and wrong for a probe whose only job is
+ * to say whether the window will.
  */
 function askForAFrame(): void {
   if (frameAskedAt !== null) return
-  if (typeof requestAnimationFrame !== 'function') return
   const asked = Date.now()
-  frameAskedAt = asked
-  requestAnimationFrame(() => {
+  const id = requestRealFrame(() => {
     const waited = Date.now() - asked
     frameAskedAt = null
     lastFrameAt = Date.now()
@@ -209,6 +235,9 @@ function askForAFrame(): void {
       )
     }
   })
+  /* Only counted as outstanding once it was actually asked for. Where there is
+     no window to ask, nothing is pending and nothing is accused. */
+  if (id !== null) frameAskedAt = asked
 }
 
 let running = false
@@ -278,4 +307,47 @@ export function watchThisPage(): void {
   document.addEventListener('visibilitychange', () => {
     note(`the document became ${document.visibilityState}`)
   })
+
+  /*
+   * The window-level events an app switch produces, noted as they happen.
+   *
+   * "It shows what I wrote whenever I swap to another app" is a sentence about
+   * one of these, and which one matters: a `blur` with no `visibilitychange`
+   * is a window that lost focus but stayed visible; a `pagehide` is the frame
+   * being torn out. Event-driven, so they cost nothing while nothing happens.
+   */
+  window.addEventListener('focus', () => note('the window gained focus'))
+  window.addEventListener('blur', () => note('the window lost focus'))
+  window.addEventListener('pageshow', () => note('pageshow: the page was shown'))
+  window.addEventListener('pagehide', () => note('pagehide: the page is going away'))
+
+  /*
+   * Whether the browser thinks this frame is on screen, kept current.
+   *
+   * Cross-origin, a frame cannot read its own position in the host; this is
+   * the one channel that answers anyway, and it fires only when the answer
+   * changes. The ratio goes on every beacon; a line goes in the ring when the
+   * frame leaves the screen or comes back, so the moment can be lined up
+   * against the frame waits around it.
+   */
+  if (typeof IntersectionObserver === 'function' && document.documentElement) {
+    const seeing = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1]
+        if (!last) return
+        const ratio = last.isIntersecting ? last.intersectionRatio : 0
+        const was = onScreen
+        onScreen = ratio
+        if (was === -1 || was <= 0 !== ratio <= 0) {
+          note(
+            ratio > 0
+              ? `the browser says ${Math.round(ratio * 100)}% of this frame is on screen`
+              : 'the browser says this frame is off screen',
+          )
+        }
+      },
+      { threshold: [0, 0.01, 0.5, 1] },
+    )
+    seeing.observe(document.documentElement)
+  }
 }

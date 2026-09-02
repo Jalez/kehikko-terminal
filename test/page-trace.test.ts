@@ -56,6 +56,13 @@ describe('the page and the server agree about the wire', () => {
     expect(read?.keystrokes).toBe(said.keystrokes)
     expect(read?.waiting).toBe(said.waiting)
     expect(read?.visibility).toBe(said.visibility)
+    /* The fields added for the frame that is owed. A missing one reads back as
+       "never" or "not measured", which in a report would say the fallback had
+       not run — on the day it was doing all the drawing. */
+    expect(read?.driven).toBe(said.driven)
+    expect(read?.onScreen).toBe(said.onScreen)
+    expect(read?.focus).toBe(said.focus)
+    expect(read?.size).toEqual(said.size)
   })
 
   test('and it survives JSON, which is what actually goes over the wire', () => {

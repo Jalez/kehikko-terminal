@@ -20,7 +20,20 @@ import './index.css'
  */
 import 'roadmap-module-protocol/client'
 import { App } from './app.tsx'
+import { keepFramesComing } from './view/frames.ts'
 import { watchThisPage } from './view/trace.ts'
+
+/**
+ * Before anything on this page asks for a frame.
+ *
+ * "It stops showing what I type until I switch to another app": the window
+ * serves this frame one animation frame every ten seconds, and xterm draws
+ * only inside one. From here on a frame that is owed is drawn from a one-shot
+ * timer instead, once, without waiting. `src/view/frames.ts` has the
+ * measurement, and why this is not the repaint loop that file's predecessor
+ * argued against.
+ */
+keepFramesComing()
 
 /**
  * Started from the entry, and not from the terminal view, because it has to
