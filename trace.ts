@@ -171,6 +171,17 @@ export interface PageStanding {
   lastRenderAgo: number | null
   keystrokes: number
   waiting: number
+  /** Draws made from a timer because the window had not served the frame it
+      was asked for. Climbing is the window owing frames; see
+      `src/view/frames.ts`. */
+  driven: number
+  /** How much of the frame the browser's own IntersectionObserver says is on
+      screen, 0 to 1, or -1 where it has not said. */
+  onScreen: number
+  /** `document.hasFocus()` at the moment of the beacon. */
+  focus: boolean
+  /** The frame's own inner width and height, in CSS pixels. */
+  size: [number, number]
   /** Events the page noted since its last beacon. */
   noted: { at: number; what: string }[]
 }
@@ -548,23 +559,31 @@ export function report(now: number = Date.now(), s: Standing = standing()): stri
     say(
       `             frames: ${p.frames} landed, last ${
         p.sinceFrame === null ? 'never' : `${(p.sinceFrame / 1000).toFixed(1)}s ago`
-      }, worst wait ${span(p.worstFrameWait)}`,
+      }, worst wait ${span(p.worstFrameWait)}; ${p.driven} drawn without waiting for one`,
     )
     if (p.frameWaiting !== null && p.frameWaiting > 1500) {
       say(
         `             *** a requested animation frame has been outstanding for ${span(
           p.frameWaiting,
-        )}. The page is running and NOT drawing.`,
+        )}. The window is not serving this frame's animation frames.`,
       )
       say(
         `                 document.visibilityState is "${p.visibility}"${
           p.visibility === 'hidden'
             ? ' — a hidden page is allowed to stop, so this may be the window, not a bug.'
-            : ' — a visible page that will not draw is the WKWebView case; see rendering.rs in kehikko-desktop.'
+            : ' — a visible frame served one animation frame every ten seconds is WebKit throttling it as "outside the viewport"; see src/view/frames.ts.'
         }`,
+      )
+      say(
+        `                 The rows are drawn anyway if "drawn without waiting" above keeps climbing. If it does not, the fallback in frames.ts is not running.`,
       )
     }
     say(`             worst timer lag ${span(p.worstTimerLag)}, visibility ${p.visibility}, up ${span(p.up)}`)
+    say(
+      `             on screen: ${
+        p.onScreen < 0 ? 'not measured' : `${Math.round(p.onScreen * 100)}% of this frame, as the browser's own IntersectionObserver sees it`
+      }; window focus ${p.focus ? 'yes' : 'no'}; ${p.size[0]}×${p.size[1]}`,
+    )
     say(
       `             xterm: ${p.written.chunks} writes, ${p.renders} renders, last render ${
         p.lastRenderAgo === null ? 'never' : `${(p.lastRenderAgo / 1000).toFixed(1)}s ago`
@@ -705,6 +724,10 @@ export function readStanding(raw: unknown): PageStanding | null {
     lastRenderAgo: maybe(it.lastRenderAgo),
     keystrokes: num(it.keystrokes),
     waiting: num(it.waiting),
+    driven: num(it.driven),
+    onScreen: num(it.onScreen, -1),
+    focus: it.focus === true,
+    size: Array.isArray(it.size) ? [num(it.size[0]), num(it.size[1])] : [0, 0],
     noted,
   }
 }

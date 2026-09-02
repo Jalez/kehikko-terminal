@@ -53,7 +53,7 @@ import { note, seen } from './trace.ts'
  * arrives. Come back, the pending frame runs, and the whole backlog appears at
  * once, which is the reported sentence word for word.
  *
- * Three fixes suggest themselves here and all three are wrong:
+ * Three fixes suggest themselves here and, for THAT case, all three are wrong:
  *
  *   - `@xterm/addon-webgl` or `@xterm/addon-canvas`. They replace the renderer,
  *     and the renderer is not what stopped: `RenderService` debounces into a
@@ -61,8 +61,10 @@ import { note, seen } from './trace.ts'
  *   - A repaint nudge — toggling a style, reading `offsetHeight` — on write. A
  *     page whose rendering update is suspended does not paint what you write
  *     into it. There is nothing to nudge.
- *   - A timer that renders when rAF will not. Same answer, and it would also be
- *     the per-tick work this workspace refuses everywhere else.
+ *   - A timer that renders when rAF will not. Same answer for a hidden page,
+ *     and as a LOOP it would be the per-tick work this workspace refuses
+ *     everywhere else. (As a one-shot fallback for a frame that is owed, on a
+ *     page that IS painting, it is the fix for the fourth report — see below.)
  *
  * It is the shell's to fix, in `kehikko-desktop`, because the shell is what
  * holds the WKWebView and decides what it is told about its window.
@@ -70,6 +72,22 @@ import { note, seen } from './trace.ts'
  * the command that produced them, so the next person does not spend the
  * afternoon in Chromium finding nothing — which is where this one started, and
  * Chromium and Playwright's headed WebKit both paint every keystroke on time.
+ *
+ * ## The fourth time, measured on the page in front of the person
+ *
+ * The shell's fix landed and the sentence came back — "it seems to show what I
+ * wrote whenever I swap to another full screen app" — and this time the trace
+ * below was running on the page while it happened. It said something the
+ * earlier measurements could not have: `visibility visible`, frames arriving
+ * one every ten seconds with a worst wait of 9.4s, the page's 1Hz timer late
+ * by exactly a second on every fifth tick, 65 writes and 9 renders in fifteen
+ * minutes. Not the `hidden` case. WebKit was serving THIS FRAME'S animation
+ * frames on its ten-second "outside the viewport" schedule while the person
+ * was typing into it, and the same host framing the same module in a fresh
+ * window painted every frame on time. `src/view/frames.ts` has the whole
+ * argument, the numbers, and the thing this module now does about it: a frame
+ * that is owed is drawn from a one-shot timer, and the draw is counted so the
+ * report can say so.
  *
  * ## And the reason this file now counts things
  *
