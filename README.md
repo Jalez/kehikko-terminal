@@ -34,6 +34,44 @@ could interact with it. A nicer read-only rendering is still read-only.
 selected references and reads their transcripts off disk without attaching to
 anything. The two are siblings and neither subsumes the other.
 
+### One shell per project
+
+The canvas names a project, and a project is a folder. This module keeps one
+shell per folder the canvas has named since the page loaded, and shows the one
+the canvas is about now. Switching project switches which shell is on screen and
+nothing else: the others keep their sockets, their ptys and whatever they were
+running, and come back where they were. A shell mid-`npm install` is not
+touched because somebody looked at another project. A new shell opens in the
+project's own directory, not in the home directory.
+
+Switching **epic** does nothing to the shell, on purpose. An epic is a unit of
+work inside a project, not a place on disk; two epics in one project share one
+checkout, and a shell per epic would either take you away from a running
+command or leak a process per epic you ever glanced at. If a shell per epic is
+wanted, it is a change to `src/view/sessions.ts` and should be argued for there.
+
+This reverses the module's first decision, which was `scope: 'global'` on the
+grounds that a terminal is about a directory and not about the canvas's subject.
+The premise was right and the conclusion was not, once `projectPath` — a
+directory — was on the wire; `manifest.ts` keeps the original argument beside
+the new one.
+
+When a session ends: with the page (every pty lives exactly as long as its
+socket, as it always did); when its shell exits and you move on; or when more
+than `MOST_KEPT` (eight) have been opened and it is the least recently shown —
+which is announced on the trace rather than done silently, and is the line that
+keeps "one per project, forever" from being a process leak. Nothing here
+survives a reload; that would be a different, larger change, and it is written
+up in `src/app.tsx` rather than built by accident.
+
+`dev/sessions-drive.mjs` is the check that this is true behind a real socket
+and not only in the tests: it frames a copy of this module on a spare port in
+`dev/two-projects.html`, greets it with one project, types into the shell,
+starts a `sleep` there, switches to a second project, types into that one,
+switches epic, comes back, and reads the rows xterm drew for each. The header
+says how to start the two servers it needs, and why `ROADMAP_MODULES_DIR` must
+point somewhere disposable while you do.
+
 ### What was here and is gone
 
 A list of every Claude Code chat on the machine, down the left, with a press to
@@ -156,7 +194,7 @@ the last 37 things that happened, oldest first
 | `the send buffer is not draining` | The **transport**. Open at this end, dead at the other | The socket. A half-open websocket is this workspace's recurring shape |
 | `pty -> page … last 40.0s ago` while everything above is fresh | The **shell**. It is blocked, or genuinely printing nothing | `ps` the pid the report prints |
 | `the heartbeat is stale` | This **server**'s event loop is not turning | This process. Nothing above it is at fault |
-| `more than one of something is live` | Something **accumulated** across a remount | An emulator, socket or observer that a `New shell` press left behind |
+| `more of something is live than the N sessions the page says it holds` | Something **accumulated** across a remount | An emulator, socket or observer that a `New shell` press left behind. N live views with N sessions held is not this: that is one shell per project, below |
 | `this module attached to the server more than once` | Two terminal handlers racing for one handshake | An HMR reload of the Vite plugin. Restart the module |
 
 `curl -s '127.0.0.1:7920/api/trace?json'` gives the same numbers as JSON.

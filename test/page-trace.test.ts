@@ -55,6 +55,12 @@ describe('the page and the server agree about the wire', () => {
     expect(read?.renders).toBe(said.renders)
     expect(read?.keystrokes).toBe(said.keystrokes)
     expect(read?.waiting).toBe(said.waiting)
+    /* One per project, and the number the live counts are judged against. A
+       field lost on the wire would read as 1, and a page honestly holding two
+       sessions would be reported as leaking one. */
+    seen.holding(3)
+    expect(readStanding(standingNow())?.held).toBe(3)
+    seen.holding(1)
     expect(read?.visibility).toBe(said.visibility)
     /* The fields added for the frame that is owed. A missing one reads back as
        "never" or "not measured", which in a report would say the fallback had

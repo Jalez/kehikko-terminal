@@ -74,6 +74,11 @@ const counts = {
   renders: 0,
   keystrokes: 0,
   waiting: 0,
+  /* How many sessions the page is holding ON PURPOSE — one per project the
+     canvas has named, see `sessions.ts`. The `live` counts above are read
+     against this rather than against one: two live views with two sessions
+     held is the design, two with one held is the leak. */
+  held: 1,
 }
 
 let lastFrameAt: number | null = null
@@ -162,6 +167,10 @@ export const seen = {
     counts.keystrokes += 1
     counts.waiting = waiting
   },
+  /** How many sessions `Shells` is keeping, said whenever it changes. */
+  holding(sessions: number): void {
+    counts.held = Math.max(1, sessions)
+  },
 }
 
 /**
@@ -193,6 +202,7 @@ export function standingNow() {
     lastRenderAgo: lastRenderAt === null ? null : now - lastRenderAt,
     keystrokes: counts.keystrokes,
     waiting: counts.waiting,
+    held: counts.held,
     /* The frame that was owed: how many draws the window did not do, how much
        of this frame the browser says is on screen, and the two facts about the
        window a person switching apps changes. See `frames.ts`. */

@@ -159,7 +159,7 @@ export interface PageStanding {
   /** How late the page's own 1s timer has been at worst. A blocked main thread
       shows here even when it recovers before anybody looks. */
   worstTimerLag: number
-  /** The accumulation counters. `live` above 1 is a leak. */
+  /** The accumulation counters. `live` above `held` is a leak. */
   views: { mounted: number; disposed: number; live: number }
   emulators: { made: number; disposed: number; live: number }
   sockets: { opened: number; closed: number; live: number }
@@ -171,6 +171,15 @@ export interface PageStanding {
   lastRenderAgo: number | null
   keystrokes: number
   waiting: number
+  /**
+   * How many sessions the page is holding on purpose: one per project the
+   * canvas has named since it loaded (`src/view/sessions.ts`). This is what
+   * the `live` counts are read against. It used to be one, implicitly, and
+   * "more than one view is live" was a leak by definition; now it is a leak
+   * only when it exceeds this. A page from before the field reads as 1, which
+   * is what it was.
+   */
+  held: number
   /** Draws made from a timer because the window had not served the frame it
       was asked for. Climbing is the window owing frames; see
       `src/view/frames.ts`. */
@@ -592,12 +601,19 @@ export function report(now: number = Date.now(), s: Standing = standing()): stri
     say(`             received ${size(p.received.bytes)} in ${p.received.chunks} messages, ${p.keystrokes} keystrokes, ${p.waiting} buffered`)
     say(
       `             live now: ${p.views.live} view, ${p.emulators.live} emulator, ${p.sockets.live} socket, ${p.observers.live} observer` +
+        `; holding ${p.held} session${p.held === 1 ? '' : 's'} on purpose, one per project` +
         `  (ever: ${p.views.mounted}/${p.views.disposed} views, ${p.emulators.made}/${p.emulators.disposed} emulators, ${p.sockets.opened}/${p.sockets.closed} sockets)`,
     )
+    /* Against `held`, not against one. The page keeps a session per project
+       the canvas has named and every one of them is a live view, emulator,
+       socket and observer by design. What accumulates by accident is anything
+       ABOVE that number. */
     const leaking =
-      p.views.live > 1 || p.emulators.live > 1 || p.sockets.live > 1 || p.observers.live > 1
+      p.views.live > p.held || p.emulators.live > p.held || p.sockets.live > p.held || p.observers.live > p.held
     if (leaking) {
-      say('             *** more than one of something is live. A remount left the old one behind, and that accumulates.')
+      say(
+        `             *** more of something is live than the ${p.held} session${p.held === 1 ? '' : 's'} the page says it holds. A remount left the old one behind, and that accumulates.`,
+      )
     }
   }
 
@@ -724,6 +740,7 @@ export function readStanding(raw: unknown): PageStanding | null {
     lastRenderAgo: maybe(it.lastRenderAgo),
     keystrokes: num(it.keystrokes),
     waiting: num(it.waiting),
+    held: Math.max(1, num(it.held, 1)),
     driven: num(it.driven),
     onScreen: num(it.onScreen, -1),
     focus: it.focus === true,
