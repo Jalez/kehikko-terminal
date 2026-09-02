@@ -99,9 +99,39 @@ describe('the report names the layer that stopped', () => {
     expect(said).toContain('a hidden page is allowed to stop')
   })
 
-  test('more than one of anything live is called a leak in those words', () => {
+  test('more live than the page says it holds is called a leak in those words', () => {
     fromPage(base({ views: { mounted: 4, disposed: 2, live: 2 } }))
-    expect(report()).toContain('more than one of something is live')
+    expect(report()).toContain('more of something is live than the 1 session the page says it holds')
+  })
+
+  test('two live views with two sessions held is one shell per project, not a leak', () => {
+    /* The page keeps a session per project the canvas has named, and each of
+       them is a live view, emulator, socket and observer by design. A report
+       that called that a leak would send somebody hunting for a remount that
+       never happened. */
+    fromPage(
+      base({
+        held: 2,
+        views: { mounted: 2, disposed: 0, live: 2 },
+        emulators: { made: 2, disposed: 0, live: 2 },
+        sockets: { opened: 2, closed: 0, live: 2 },
+        observers: { live: 2 },
+      }),
+    )
+    const said = report()
+    expect(said).toContain('holding 2 sessions on purpose')
+    expect(said).not.toContain('A remount left the old one behind')
+  })
+
+  test('a page from before sessions existed reads as holding one', () => {
+    /* Read through `readStanding`, the way a real beacon is, with the field
+       absent: that is what an older page's JSON looks like, and it must land
+       as the one session such a page did hold. */
+    const { held: _dropped, ...older } = base()
+    const read = readStanding(older)
+    if (!read) throw new Error('an older standing did not read')
+    fromPage(read)
+    expect(report()).toContain('holding 1 session on purpose')
   })
 })
 
@@ -244,6 +274,7 @@ function plain() {
     lastRenderAgo: 20 as number | null,
     keystrokes: 5,
     waiting: 0,
+    held: 1,
     driven: 0,
     onScreen: 1,
     focus: true,

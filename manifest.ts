@@ -50,20 +50,44 @@ export const PREFERRED_PORT = 7920
  * subsumes the other. If you want work dispatched and watched, that is
  * orchestrator. If you want to sit down and type, that is here.
  *
- * ## `global`, not `epic`
+ * ## `epic`, which used to be `global`, and the argument that changed
  *
- * A terminal is not about an epic. It is about a directory and a shell, and the
- * canvas's subject changing should not disturb one — a container that reset your
- * shell because somebody switched epics in another container would be unusable. The
- * context is still received and still honoured for the one thing it genuinely
- * says about this module: the theme.
+ * This said `global` for its first three days, with this reasoning: "A
+ * terminal is not about an epic. It is about a directory and a shell, and the
+ * canvas's subject changing should not disturb one — a container that reset
+ * your shell because somebody switched epics in another container would be
+ * unusable." Every sentence of that is still true, and it is kept here so the
+ * reversal is a reversal of something rather than a silent overwrite.
+ *
+ * What it missed is in its own second sentence. A terminal is about a
+ * DIRECTORY — and the project on the wire is one: `projectPath`, an absolute
+ * folder the host vouches for, which arrived in the protocol after that essay
+ * was written. A module that is about a directory and ignores the one the
+ * canvas names is not staying out of the canvas's business; it is running the
+ * person's commands in whichever project they happened to look at last. That
+ * was reported, in those words, and it is why the scope changed.
+ *
+ * `scope: 'epic'` is the protocol's word for "follows the reader": told which
+ * subject is open, told again on every switch, re-pointed. This module now is
+ * that, and a host that only re-points epic-scoped modes — which is what the
+ * wire says a conforming host does — has to be told so, or it would be exactly
+ * the module the report describes. What it does with the two halves of the
+ * subject differs, and is written down in `src/view/sessions.ts`: the PROJECT
+ * keys a shell, and a switch shows that project's session without touching
+ * any other; the EPIC is deliberately not a key, because an epic is a unit of
+ * work inside a folder rather than a folder, and a shell per epic would either
+ * take a person away from a running command or leak a process per glance. The
+ * original essay's fear — a shell reset because somebody switched epics —
+ * cannot happen, because switching never closes anything.
  *
  * ## What is declared, and the longer list of what is not
  *
  * - **`uses: []`.** This module asks the host for nothing. Everything on screen
  *   is a pty on this machine, and there is no question a host could answer that
  *   would change what a shell does. A module that declared capabilities it never
- *   exercised would be asking for permission it had no use for.
+ *   exercised would be asking for permission it had no use for. Following the
+ *   project is READING the context, not asking for anything, and the protocol
+ *   is explicit that reading a context is not a capability.
  * - **`prompt: false`.** A prompt is standing instructions somebody writes FOR
  *   a module, and it earns its place when the module has a decision it would
  *   make differently having read them. This one has no decisions: it runs the
@@ -119,7 +143,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     'machine as them, with no sandbox between: prefer the reversible order, and ask before the step ' +
     'that cannot be taken back.',
   entry: '/app',
-  modes: [{ id: 'terminal', label: 'Terminal', scope: 'global' }],
+  modes: [{ id: 'terminal', label: 'Terminal', scope: 'epic' }],
   extensions: { emits: [], consumes: [] },
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,

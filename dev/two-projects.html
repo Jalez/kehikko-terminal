@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  A host with two projects, and nothing else a host does.
+
+  The instrument behind `src/view/sessions.ts`. It frames the module the way
+  the host does — sandboxed, on its own origin — and greets it the way the host
+  does, and then the ONLY thing it can do is change the subject. `say(context)`
+  posts a `roadmap.context` carrying whatever project and epic it is handed,
+  which is what a person picking a different project in the host's bar comes to
+  by the time it reaches a module. `dev/sessions-drive.mjs` drives it and reads
+  what the framed terminal did.
+
+  The module under test must be running on 127.0.0.1:7925 with `ROADMAP_ORIGIN`
+  set to this page's origin, so its frame-ancestors policy admits it. Start it
+  with `ROADMAP_MODULES_DIR` pointing somewhere disposable, or its `serves()`
+  plugin will re-point the real registration at the copy under test — which
+  takes the live terminal, with everybody's shells in it, off the canvas.
+-->
+<meta charset="utf-8">
+<title>two projects</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui; }
+  .bar { height: 32px; background: #ddd; padding: 8px; box-sizing: border-box; }
+  .frame { width: 900px; height: 500px; }
+  iframe { height: 100%; width: 100%; border: 0; background: white; display: block; }
+</style>
+<body>
+<div class="bar" id="bar">a host with two projects</div>
+<div class="frame">
+  <iframe id="module" title="Terminal" src="http://127.0.0.1:7925/app"
+    sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+    allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+</div>
+<script>
+  const PROTOCOL = 2
+  const frame = document.getElementById('module')
+  const heard = []
+  window.heard = heard
+  window.addEventListener('message', (ev) => {
+    if (ev.source !== frame.contentWindow) return
+    heard.push(ev.data)
+  })
+
+  const whole = (context) => ({
+    epic: null,
+    project: null,
+    projectPath: null,
+    theme: 'light',
+    selection: [],
+    passage: null,
+    /* Everything else the context carries is defaulted by the schema. Naming
+       a field here with the wrong shape — `kehikko` is an object, not a name —
+       makes the module refuse the whole greeting, silently, which is a
+       morning lost. Say less. */
+    ...context,
+  })
+
+  /* The greeting, sent on the frame's `load` exactly as the host sends it. */
+  let greeted = null
+  window.greet = (context) => {
+    greeted = whole(context)
+    frame.contentWindow.postMessage(
+      { type: 'roadmap.hello', protocol: PROTOCOL, session: 'probe', state: null, context: greeted },
+      '*',
+    )
+    document.getElementById('bar').textContent = `greeted: ${greeted.projectPath ?? 'no project'}`
+  }
+
+  /* On the frame's `load`, as the host does it — and BEFORE the module's
+     greeting grace runs out, which is why this cannot wait for a driver to
+     call `greet`: a module greeted 700ms after load has already decided it is
+     unframed. The first project comes off the query string. */
+  const q = new URLSearchParams(location.search)
+  frame.addEventListener('load', () => {
+    if (q.get('project')) window.greet({ project: 'first', projectPath: q.get('project'), epic: q.get('epic') })
+  })
+
+  /* The subject changing, which is the whole of what this host can do. */
+  window.say = (context) => {
+    const next = whole({ ...(greeted ?? {}), ...context })
+    frame.contentWindow.postMessage({ type: 'roadmap.context', protocol: PROTOCOL, ...next }, '*')
+    document.getElementById('bar').textContent = `about: ${next.projectPath ?? 'no project'} / ${next.epic ?? 'no epic'}`
+  }
+</script>
+</body>

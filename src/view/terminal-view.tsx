@@ -165,41 +165,46 @@ export type Standing =
 export function TerminalView({
   theme,
   at,
-  settled,
+  shown,
   onStanding,
 }: {
   theme: 'light' | 'dark'
   /**
-   * The open project's folder, or null where there is none.
+   * The folder this shell is for: the project's, or null for home.
    *
    * A shell that opens in the home directory when the person is looking at a
    * project is a shell whose first command is always the same `cd`. The canvas
-   * knows where the project is; this is that answer, passed through.
+   * knows where the project is; this is that answer, passed through — and it
+   * is fixed for the life of this component. A view is never re-pointed at
+   * another folder: `Shells` in `app.tsx` keeps one view per project and shows
+   * the one the canvas is about, so the place a shell is in and the place a
+   * shell was spawned in cannot disagree.
+   *
+   * It used to be paired with a `settled` flag, because this view was mounted
+   * before the greeting and had to wait to learn where it should open. It is
+   * mounted AFTER the canvas has spoken now, by a parent that already knows,
+   * so there is nothing left to wait for.
    */
   at: string | null
   /**
-   * Whether the canvas has said anything yet.
+   * Whether this is the session on screen.
    *
-   * The greeting arrives after this mounts, so a terminal that spawned the
-   * moment it had a size would open in the home directory and then learn where
-   * it should have been — and a pty's working directory cannot be changed
-   * afterwards from out here without typing into somebody's shell. So the spawn
-   * waits for the canvas to have spoken, or for it to be settled that nobody
-   * will. Unframed this is true immediately and the shell opens at home, which
-   * is the only honest answer when nothing has named a project.
+   * The others are `hidden` by the parent and keep running. What changes when
+   * this becomes true is only focus: a person who switched project should be
+   * able to type at once, and the emulator that was hidden has no way of
+   * knowing it is the one being looked at now.
    */
-  settled: boolean
+  shown: boolean
   onStanding?: (standing: Standing) => void
 }) {
-  /* Read inside the effect below, which runs once: putting these in its
-     dependency list would dispose a live terminal and spawn a new shell every
-     time the canvas mentioned a different project, which is the one thing a
-     terminal must never do to somebody mid-command. */
-  const start = useRef<{ at: string | null; settled: boolean }>({ at, settled })
-  start.current = { at, settled }
-
-  /** Set by the effect below, so a late greeting can start a waiting shell. */
-  const wake = useRef<(() => void) | null>(null)
+  /* Read inside the effect below, which runs once. It cannot change for a
+     mounted view — see `at` above — and it is read through a ref rather than
+     listed as a dependency so that a future edit which makes it changeable
+     does not, as a side effect, dispose a live terminal and spawn a new shell
+     every time the canvas mentioned a different project. That is the one thing
+     a terminal must never do to somebody mid-command. */
+  const start = useRef<{ at: string | null }>({ at })
+  start.current = { at }
 
   const holder = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
@@ -284,9 +289,12 @@ export function TerminalView({
      */
     const usable = () => node.clientWidth > 40 && node.clientHeight > 40
 
-    /* Both conditions, and the second is not about layout: a shell may only be
-       spawned once the canvas has had its say about where. See `settled`. */
-    const ready = () => usable() && start.current.settled
+    /* A session the parent has hidden measures zero on both axes, so this is
+       also what keeps a view that was mounted while another project was on
+       screen from spawning until it is actually shown. There is no second
+       condition about the canvas any more: a view exists only once the canvas
+       has said where it should be. */
+    const ready = () => usable()
 
     let socket: WebSocket | null = null
 
@@ -418,10 +426,10 @@ export function TerminalView({
          freeze. */
       seen.keystroke(waiting.length)
       /* `ready()` rather than an unconditional connect: a keystroke is proof
-         somebody is looking at this, but not proof the canvas has said where the
-         project is, and a pty's working directory cannot be changed afterwards.
-         What was typed is already in `waiting` and is flushed when the socket
-         opens, so nothing is lost by waiting a moment longer. */
+         somebody is looking at this, but a view with no width has nothing
+         useful to tell a shell about its size. What was typed is already in
+         `waiting` and is flushed when the socket opens, so nothing is lost by
+         waiting a moment longer. */
       if (!socket && ready()) connect()
     })
 
@@ -475,16 +483,7 @@ export function TerminalView({
        observation that may not come. */
     if (ready()) connect()
 
-    /* The canvas usually speaks before the container has a size, in which case
-       the observation above starts the shell. When it is the other way round —
-       laid out first, greeted after — nothing else would fire, so the effect on
-       `settled` below calls this. */
-    wake.current = () => {
-      if (ready()) connect()
-    }
-
     return () => {
-      wake.current = null
       resized.disconnect()
       seen.observerGone()
       drawn.dispose()
@@ -508,15 +507,21 @@ export function TerminalView({
   }, [theme])
 
   /*
-   * The canvas has spoken: start the shell if it was only waiting for that.
+   * This became the session on screen: take the keyboard.
    *
    * Separate from the effect that builds the terminal, and deliberately so —
-   * putting `settled` in that effect's dependencies would dispose a live
-   * emulator and spawn a second shell the moment the greeting arrived.
+   * putting `shown` in that effect's dependencies would dispose a live
+   * emulator and spawn a second shell every time the canvas switched project,
+   * which is the whole thing `Shells` exists to prevent. Focus is the only
+   * thing that follows the switch; the shell itself was never disturbed.
+   *
+   * The size is not handled here because it does not need to be: the
+   * `ResizeObserver` above sees the box go from nothing to its real size when
+   * the parent drops `hidden`, and that is the resize path.
    */
   useEffect(() => {
-    if (settled) wake.current?.()
-  }, [settled])
+    if (shown) term.current?.focus()
+  }, [shown])
 
   return <div ref={holder} className="h-full w-full" />
 }
