@@ -2,8 +2,8 @@ import { resolve } from 'node:path'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { WELL_KNOWN } from 'roadmap-module-protocol'
-import { serves } from 'roadmap-module-protocol/serve'
+import { LEGACY_WELL_KNOWN, WELL_KNOWN, legacyManifest } from 'kehikot-module-protocol'
+import { frameAncestors, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
 import { answer } from './doors.ts'
@@ -84,6 +84,8 @@ function doors(): Plugin {
         /* Spelled by the protocol package so that this module and every host
            cannot disagree about it by a character. */
         if (path === WELL_KNOWN) return send(200, MANIFEST)
+        /* The same manifest in the spelling a host from before the rename asks for. */
+        if (path === LEGACY_WELL_KNOWN) return send(200, legacyManifest(MANIFEST))
 
         if (path === '/app' || path === '/app/' || path === '/') {
           void server
@@ -104,7 +106,7 @@ function doors(): Plugin {
                */
               response.setHeader(
                 'content-security-policy',
-                `frame-ancestors 'self' ${process.env.ROADMAP_ORIGIN ?? 'http://127.0.0.1:4181 http://localhost:4181'}`,
+                frameAncestors(),
               )
               response.end(html)
             })

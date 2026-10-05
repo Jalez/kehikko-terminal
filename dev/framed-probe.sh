@@ -15,16 +15,16 @@
 #
 # Why a second copy, and why it must NOT be started with `bun run dev`:
 # `serves()` in `vite.config.ts` registers whichever port it binds as
-# `roadmap.terminal`, and whoever registers last wins — so a probe copy
+# `kehikot.terminal`, and whoever registers last wins — so a probe copy
 # started the ordinary way re-points the host at itself and takes the live
 # terminal, with everybody's shells in it, off the canvas. Start it with a
 # config that leaves `serves()` out and a fixed port instead:
 #
 #     sed 's/serves({ id: ID, prefer: PREFERRED_PORT }), //' vite.config.ts > vite.probe.config.ts
-#     ROADMAP_ORIGIN=http://127.0.0.1:7926 \
+#     KEHIKOT_ORIGINS=http://127.0.0.1:7926 \
 #       ./node_modules/.bin/vite --config vite.probe.config.ts --host 127.0.0.1 --port 7925 --strictPort
 #
-# `ROADMAP_ORIGIN` is the page that will frame it: `/app` sends a
+# `KEHIKOT_ORIGINS` is the page that will frame it: `/app` sends a
 # `frame-ancestors` policy naming the host, and the test page is not the host.
 # Serve the test page from this directory on that port:
 #

@@ -17,11 +17,11 @@
  * can be mistaken for a start script and pointed at the live module:
  *
  *     mkdir -p /tmp/terminal-probe/modules /tmp/proj-a /tmp/proj-b
- *     PORT=7925 ROADMAP_MODULES_DIR=/tmp/terminal-probe/modules \
- *       ROADMAP_ORIGIN=http://127.0.0.1:7926 bun run dev          # the module, on a spare port
+ *     PORT=7925 KEHIKOT_MODULES_DIR=/tmp/terminal-probe/modules \
+ *       KEHIKOT_ORIGINS=http://127.0.0.1:7926 bun run dev          # the module, on a spare port
  *     (cd dev && python3 -m http.server 7926 --bind 127.0.0.1)   # this page's origin
  *
- * `ROADMAP_MODULES_DIR` is not optional. Without it `serves()` rewrites the
+ * `KEHIKOT_MODULES_DIR` is not optional. Without it `serves()` rewrites the
  * real registration to point at the copy under test, and the live terminal —
  * with everybody's shells in it — comes off the canvas.
  *
@@ -59,7 +59,7 @@ await sleep(1500)
 const frame = page.frames().find((f) => f.url().startsWith(MODULE))
 if (!frame) throw new Error('the module frame did not load')
 const heard = await page.evaluate(() => window.heard.map((m) => m.type))
-check('the module answered the greeting', heard.includes('roadmap.ready'), heard.join(', '))
+check('the module answered the greeting', heard.includes('kehikot.ready'), heard.join(', '))
 
 /** The rows xterm drew for one session, as text. */
 const rows = async (at) =>

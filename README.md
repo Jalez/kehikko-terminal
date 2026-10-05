@@ -2,7 +2,7 @@
 
 A real terminal on this machine. Your shell, in a container, with nothing else in it.
 
-Port **7920**. `roadmap.terminal`.
+Port **7920**. `kehikot.terminal`.
 
 ```bash
 bun install
@@ -69,7 +69,7 @@ and not only in the tests: it frames a copy of this module on a spare port in
 `dev/two-projects.html`, greets it with one project, types into the shell,
 starts a `sleep` there, switches to a second project, types into that one,
 switches epic, comes back, and reads the rows xterm drew for each. The header
-says how to start the two servers it needs, and why `ROADMAP_MODULES_DIR` must
+says how to start the two servers it needs, and why `KEHIKOT_MODULES_DIR` must
 point somewhere disposable while you do.
 
 ### What was here and is gone

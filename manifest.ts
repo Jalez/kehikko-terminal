@@ -1,6 +1,6 @@
-import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'roadmap-module-protocol'
+import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'kehikot-module-protocol'
 
-export const ID = 'roadmap.terminal'
+export const ID = 'kehikot.terminal'
 export const VERSION = '1.0.0'
 
 /**
@@ -10,7 +10,7 @@ export const VERSION = '1.0.0'
  * It used to be said three times — `export PORT="${PORT:-7920}"` in `run.sh`,
  * `Number(process.env.PORT ?? 7920)` at the top of `vite.config.ts`, and again
  * in `register.ts` — with nothing keeping them in step, and a fourth copy
- * sitting in `~/.roadmap/modules` from whenever somebody last ran the third.
+ * sitting in `~/Library/Application Support/Kehikot/modules` from whenever somebody last ran the third.
  *
  * It is here rather than in `vite.config.ts` because `register.ts` needs it too,
  * and importing a Vite config to read one number would build the plugin list and
