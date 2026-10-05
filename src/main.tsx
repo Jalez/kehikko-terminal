@@ -18,7 +18,7 @@ import './index.css'
  * — a module scope that only a lazily-loaded chunk imports is a module scope
  * that has not run yet, which is the same bug wearing a bundler's clothes.
  */
-import 'roadmap-module-protocol/client'
+import 'kehikot-module-protocol/client'
 import { App } from './app.tsx'
 import { keepFramesComing } from './view/frames.ts'
 import { watchThisPage } from './view/trace.ts'

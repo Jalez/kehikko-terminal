@@ -77,6 +77,27 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Install when nothing is installed, AND whenever bun.lock or package.json is
+# newer than the last install here, the same rule as the host's own run.sh. A
+# pull that moves the protocol pin leaves the old package in node_modules, and
+# a page that imports a name the old package does not have draws nothing.
+# `--frozen-lockfile`, so a start installs exactly what bun.lock says and never
+# rewrites it behind somebody's back. The stamp is written only after an
+# install that succeeded.
+INSTALLED=node_modules/.kehikot-installed
+VITE_FORCE=
+if [ ! -d node_modules ] || [ ! -f "$INSTALLED" ] || [ bun.lock -nt "$INSTALLED" ] || [ package.json -nt "$INSTALLED" ]; then
+  echo "installing…" >&2
+  if [ -f bun.lock ]; then
+    bun install --frozen-lockfile >&2 || { echo "bun install --frozen-lockfile failed: bun.lock does not match package.json. Run \`bun install\` and commit bun.lock." >&2; exit 1; }
+  else
+    bun install >&2
+  fi
+  touch "$INSTALLED"
+  # Rebuild Vite's pre-bundle rather than trust one made from the old packages.
+  VITE_FORCE=--force
+fi
+
 # node-pty is native. If it is missing, every other part of this module works
 # and only the terminal fails — a container that draws a chat list and then refuses
 # to open a shell, with the reason in this log rather than on screen. Say so
@@ -111,4 +132,4 @@ for helper in node_modules/node-pty/prebuilds/*/spawn-helper node_modules/node-p
   fi
 done
 
-exec bun run vite
+exec bun run vite $VITE_FORCE

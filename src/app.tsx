@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { useRoadmap } from 'roadmap-module-protocol/client/react'
+import { useKehikot } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
 import { NOTHING_HELD, forget, label, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
 
-const ID = 'roadmap.terminal'
+const ID = 'kehikot.terminal'
 
 /**
  * A terminal. That is the whole of it.
@@ -62,7 +62,7 @@ export function App() {
    * to every greeting, refuses every `goto` at once, and asks the host nothing,
    * because `uses` is empty and a terminal has no questions.
    */
-  const { context, where } = useRoadmap(ID, {
+  const { context, where } = useKehikot(ID, {
     /*
      * A walk, answered immediately and always with `found: false`.
      *

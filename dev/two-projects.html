@@ -5,14 +5,14 @@
   The instrument behind `src/view/sessions.ts`. It frames the module the way
   the host does — sandboxed, on its own origin — and greets it the way the host
   does, and then the ONLY thing it can do is change the subject. `say(context)`
-  posts a `roadmap.context` carrying whatever project and epic it is handed,
+  posts a `kehikot.context` carrying whatever project and epic it is handed,
   which is what a person picking a different project in the host's bar comes to
   by the time it reaches a module. `dev/sessions-drive.mjs` drives it and reads
   what the framed terminal did.
 
-  The module under test must be running on 127.0.0.1:7925 with `ROADMAP_ORIGIN`
+  The module under test must be running on 127.0.0.1:7925 with `KEHIKOT_ORIGINS`
   set to this page's origin, so its frame-ancestors policy admits it. Start it
-  with `ROADMAP_MODULES_DIR` pointing somewhere disposable, or its `serves()`
+  with `KEHIKOT_MODULES_DIR` pointing somewhere disposable, or its `serves()`
   plugin will re-point the real registration at the copy under test — which
   takes the live terminal, with everybody's shells in it, off the canvas.
 -->
@@ -60,7 +60,7 @@
   window.greet = (context) => {
     greeted = whole(context)
     frame.contentWindow.postMessage(
-      { type: 'roadmap.hello', protocol: PROTOCOL, session: 'probe', state: null, context: greeted },
+      { type: 'kehikot.hello', protocol: PROTOCOL, session: 'probe', state: null, context: greeted },
       '*',
     )
     document.getElementById('bar').textContent = `greeted: ${greeted.projectPath ?? 'no project'}`
@@ -78,7 +78,7 @@
   /* The subject changing, which is the whole of what this host can do. */
   window.say = (context) => {
     const next = whole({ ...(greeted ?? {}), ...context })
-    frame.contentWindow.postMessage({ type: 'roadmap.context', protocol: PROTOCOL, ...next }, '*')
+    frame.contentWindow.postMessage({ type: 'kehikot.context', protocol: PROTOCOL, ...next }, '*')
     document.getElementById('bar').textContent = `about: ${next.projectPath ?? 'no project'} / ${next.epic ?? 'no epic'}`
   }
 </script>

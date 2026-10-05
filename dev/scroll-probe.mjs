@@ -162,7 +162,7 @@ const results = []
   } else {
     console.log('framed in the host at http://127.0.0.1:4181')
     const rect = await page.evaluate(() => {
-      const el = document.querySelector('[data-frame="roadmap.terminal"]')
+      const el = document.querySelector('[data-frame="kehikot.terminal"]')
       if (!el) return null
       const r = el.getBoundingClientRect()
       return { x: r.x, y: r.y, width: r.width, height: r.height }
