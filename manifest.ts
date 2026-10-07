@@ -123,6 +123,8 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   id: ID,
   name: 'Terminal',
   version: VERSION,
+  /* Where a host files this module in its list, most fitting first. */
+  tags: ['code'],
   summary: 'A real terminal on this machine. Your shell, in a container, with nothing else in it.',
   /**
    * What an agent should do about this module being here.
