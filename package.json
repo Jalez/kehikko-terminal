@@ -21,7 +21,7 @@
     "node-pty": "^1.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#v0.36.0",
+    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#v1.0.0",
     "tailwind-merge": "^3.6.0",
     "ws": "^8.21.3",
     "zod": "^3.23.8"
