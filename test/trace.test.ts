@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { answer, TICKET } from '../doors.ts'
+import { BUILD_HEADER, buildStamp } from 'kehikot-module-protocol'
+import { TICKET_HEADER, doorsFetch } from 'kehikot-module-protocol/serve'
+
+import { BUILD, answer, TICKET } from '../doors.ts'
+import { MANIFEST } from '../manifest.ts'
 import {
   closed,
   connected,
@@ -218,16 +222,18 @@ describe('what the page says is checked rather than believed', () => {
 })
 
 describe('the doors', () => {
+  const NONE = new URLSearchParams()
+
   test('the trace answers GET as text, so one command is one command', () => {
     const said = answer('GET', '/api/trace')
     expect(said?.status).toBe(200)
-    expect(said?.type).toBe('text')
-    expect(String(said?.body)).toContain('read down until the freshness stops')
+    expect(said?.raw?.type).toContain('text/plain')
+    expect(String(said?.raw?.bytes)).toContain('read down until the freshness stops')
   })
 
   test('and as JSON for anything that would rather graph it', () => {
-    const said = answer('GET', '/api/trace', { json: true })
-    expect(said?.type).toBe('json')
+    const said = answer('GET', '/api/trace', new URLSearchParams('json'))
+    expect(said?.raw).toBeUndefined()
     expect(said?.body).toHaveProperty('beat')
   })
 
@@ -236,13 +242,43 @@ describe('the doors', () => {
   })
 
   test('a beacon without this module’s ticket is refused', () => {
-    expect(answer('POST', '/api/trace/page', { body: {}, ticket: 'nope' })?.status).toBe(403)
-    expect(answer('POST', '/api/trace/page', { body: {} })?.status).toBe(403)
+    expect(answer('POST', '/api/trace/page', NONE, { standing: {} }, 'nope')?.status).toBe(403)
+    expect(answer('POST', '/api/trace/page', NONE, { standing: {} })?.status).toBe(403)
+    /* Marked, so the page's `ask` can tell a page older than its server from any other refusal. */
+    expect(answer('POST', '/api/trace/page', NONE, { standing: {} }, 'nope')?.body).toMatchObject({ refused: 'ticket' })
   })
 
   test('a beacon with the ticket is taken, and one that is not a standing is not', () => {
-    expect(answer('POST', '/api/trace/page', { body: base({}), ticket: TICKET })?.status).toBe(200)
-    expect(answer('POST', '/api/trace/page', { body: 'nonsense', ticket: TICKET })?.status).toBe(400)
+    expect(answer('POST', '/api/trace/page', NONE, { standing: base({}) }, TICKET)?.status).toBe(200)
+    expect(answer('POST', '/api/trace/page', NONE, { standing: 'nonsense' }, TICKET)?.status).toBe(400)
+    expect(answer('POST', '/api/trace/page', NONE, null, TICKET)?.status).toBe(400)
+  })
+
+  test('through the real doors: the header carries the ticket, the page carries it and the build, and nothing is cached', async () => {
+    const through = doorsFetch({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Terminal', ticket: TICKET }, maxBodyBytes: 64 * 1024 })
+    const post = (headers: Record<string, string>, body: unknown) =>
+      through(new Request('http://127.0.0.1/api/trace/page', { method: 'POST', headers, body: JSON.stringify(body) }))
+
+    expect((await post({ [TICKET_HEADER]: TICKET }, { standing: base({}) }))?.status).toBe(200)
+    /* The ticket in the body, where this module used to carry it, is no ticket. */
+    expect((await post({}, { ticket: TICKET, standing: base({}) }))?.status).toBe(403)
+    /* More than this module reads is refused before anything is parsed. */
+    expect((await post({ [TICKET_HEADER]: TICKET }, { standing: 'x'.repeat(70 * 1024) }))?.status).toBe(413)
+
+    const page = (await through(new Request('http://127.0.0.1/app')))!
+    const html = await page.text()
+    expect(page.headers.get('cache-control')).toBe('no-store')
+    expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'self'")
+    expect(html).toContain(`<script id="ticket" type="application/json">${JSON.stringify(TICKET)}</script>`)
+    expect(html).toContain('id="build"')
+
+    const health = (await through(new Request('http://127.0.0.1/healthz')))!
+    expect(health.headers.get(BUILD_HEADER)).toBe(buildStamp(BUILD))
+    expect(await health.json()).toMatchObject({ ok: true, id: 'kehikot.terminal', build: { started: BUILD.started } })
+
+    const text = (await through(new Request('http://127.0.0.1/api/trace')))!
+    expect(text.headers.get('content-type')).toContain('text/plain')
+    expect(text.headers.get('access-control-allow-origin')).toBeNull()
   })
 
   test('everything else is still left to Vite rather than 404d', () => {

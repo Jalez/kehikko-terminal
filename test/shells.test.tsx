@@ -96,6 +96,35 @@ describe('a shell per project', () => {
     expect(unmounted).toEqual([])
   })
 
+  test('a server that stopped is said under the shell, and the shell’s last screen stays', () => {
+    const { container, rerender } = render(<Shells theme="light" where="hosted" projectPath={A} />)
+    rerender(<Shells theme="light" where="hosted" projectPath={A} cover="down" />)
+
+    /* The module's own server stopped answering. The session is still mounted
+       and still on screen — what a command printed before it died is the thing
+       somebody wants to read — and the words are in the strip below it. */
+    expect(container.querySelector('[data-cover]')?.getAttribute('data-cover')).toBe('down')
+    expect(container.textContent).toContain('Terminal’s own server is not answering.')
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Try again'])
+    expect(onScreen(container)).toEqual({ terminals: [A], shown: [A], hidden: [false] })
+    expect(unmounted).toEqual([])
+
+    /* A dead shell under a dead server offers the one thing that could work: not a new shell. */
+    act(() => tell.get(A)?.({ at: 'closed', why: 'the connection ended' }))
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Try again'])
+
+    rerender(<Shells theme="light" where="hosted" projectPath={A} />)
+    expect(container.querySelector('[data-cover]')).toBeNull()
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['New shell'])
+    expect(mounted).toEqual([A])
+  })
+
+  test('while nothing has been heard yet, the page says what it is waiting for', () => {
+    const { container } = render(<Shells theme="light" where="listening" projectPath={null} cover="waiting" />)
+    expect(container.textContent).toContain('Waiting for Kehikot…')
+    expect(mounted).toEqual([])
+  })
+
   test('coming back shows the same session rather than a new one', () => {
     const { container, rerender } = render(<Shells theme="light" where="hosted" projectPath={A} />)
     rerender(<Shells theme="light" where="hosted" projectPath={B} />)

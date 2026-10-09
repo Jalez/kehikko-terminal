@@ -112,7 +112,7 @@ The one that matters, and the one that is actually stoppable:
 | `Origin` checked on upgrade | Browsers always send it and page JavaScript cannot forge it, so `https://evil.example` is refused outright. |
 | `Host` checked on upgrade | DNS rebinding — a name that resolves to 127.0.0.1 would otherwise arrive with its own origin intact. |
 | No CORS headers, anywhere | A cross-origin `fetch` may be sent but its response may not be read, so the ticket cannot be lifted out of the page. |
-| A ticket in the page | Minted per process, printed into `/app`, required as the first frame. Nothing is spawned before it is checked. |
+| A ticket in the page | Minted per process, printed into `/app`, required as the first frame of the socket and in `x-module-ticket` on the one HTTP write. Compared in constant time. Nothing is spawned before it is checked. |
 | `frame-ancestors` | Only this origin and the host may frame the page, so a live terminal cannot be embedded in a stranger's document. |
 | Bound to 127.0.0.1 | Set explicitly in `vite.config.ts`, not left to a default. |
 
