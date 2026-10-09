@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
-import { ticket } from './ticket.ts'
+import { probeServer, ticket } from 'kehikot-module-protocol/client'
 import { note, seen } from './trace.ts'
 
 /**
@@ -297,7 +297,6 @@ export function TerminalView({
     const ready = () => usable()
 
     let socket: WebSocket | null = null
-
     const connect = () => {
       if (socket) return
       try {
@@ -355,6 +354,10 @@ export function TerminalView({
         if (!ended) {
           ended = true
           seen.socketClosed(why)
+          /* A shell that exits and a server that stopped both end the socket.
+             Ask which, so a page whose server has gone says that rather than
+             offering a new shell nothing could open. */
+          void probeServer()
         }
         move({ at: 'closed', why })
       }
@@ -363,6 +366,7 @@ export function TerminalView({
         if (!ended) {
           ended = true
           seen.socketClosed('the connection could not be made')
+          void probeServer()
         }
         /* No detail available by design — the browser does not tell a page why
            a socket failed, precisely so a page cannot use it to probe. Say the

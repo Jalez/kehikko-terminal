@@ -1,5 +1,5 @@
 import { framesDriven, requestRealFrame } from './frames.ts'
-import { ticket } from './ticket.ts'
+import { ask } from 'kehikot-module-protocol/client'
 
 /**
  * The page's half of the trace, which exists because a frozen page cannot draw
@@ -290,24 +290,21 @@ export function watchThisPage(): void {
     posting = true
     /*
      * `keepalive` so a beacon sent as the page is being torn down still goes.
-     * Failures are swallowed: the server may be restarting, the module may have
-     * been unframed, and a diagnostic that throws into somebody's console when
-     * it cannot reach home is a diagnostic that looks like the bug.
+     * The protocol's `ask` carries the ticket in the header every module uses
+     * and never throws: the server may be restarting, the module may have been
+     * unframed, and a diagnostic that throws into somebody's console when it
+     * cannot reach home is a diagnostic that looks like the bug.
+     *
+     * It is also how this page learns its server has gone, or is no longer the
+     * process that served it: `ask` notes what every answer says about the
+     * server, and the cover in `app.tsx` draws that.
      */
-    void fetch('/api/trace/page', {
-      method: 'POST',
-      keepalive: true,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ticket: ticket(), standing: said }),
-    })
+    void ask('/api/trace/page', { body: { standing: said }, keepalive: true })
       .then((answer) => {
         /* Only what was actually delivered is forgotten. A beacon that failed
            leaves its lines in the ring for the next one, which is the point of
            shipping them at all. */
         if (answer.ok) noted = noted.slice(said.noted.length)
-      })
-      .catch(() => {
-        /* Nothing to say and nowhere to say it. */
       })
       .finally(() => {
         posting = false

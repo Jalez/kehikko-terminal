@@ -27,7 +27,7 @@ const origin = `http://127.0.0.1:${port}`
 
 const page = await fetch(`${origin}/app`).then((r) => r.text())
 const ticket = JSON.parse(
-  page.match(/id="terminal-ticket" type="application\/json">([^<]*)</)?.[1] ?? '""',
+  page.match(/id="ticket" type="application\/json">([^<]*)</)?.[1] ?? '""',
 )
 if (!ticket) throw new Error('no ticket in the page; is the module running on that port?')
 

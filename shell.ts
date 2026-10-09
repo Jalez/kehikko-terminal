@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
 import { homedir, userInfo } from 'node:os'
 import type { Duplex } from 'node:stream'
+
+import { mintTicket, sameTicket } from 'kehikot-module-protocol/serve'
 
 import * as trace from './trace.ts'
 
@@ -54,7 +55,7 @@ import * as trace from './trace.ts'
  * authorises.
  */
 
-export const TICKET = randomUUID()
+export const TICKET = mintTicket()
 
 /** How long a connection may stay silent before it has proved itself. */
 const MUST_SPEAK_WITHIN = 5_000
@@ -136,7 +137,9 @@ export function opening(raw: unknown, ticket: string = TICKET): Opening | string
   if (typeof parsed !== 'object' || parsed === null) return 'The first frame must be a JSON object.'
   const held = parsed as Record<string, unknown>
 
-  if (typeof held.ticket !== 'string' || held.ticket !== ticket) {
+  /* The protocol's comparison: constant-time, so neither the length nor a
+     matching prefix of the real ticket shows in how long the refusal took. */
+  if (typeof held.ticket !== 'string' || !sameTicket(held.ticket, ticket)) {
     return 'That did not carry this module’s ticket. The ticket is printed into the page this module serves, and only that page has it.'
   }
 
@@ -405,10 +408,26 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
     }
   }
 
-  ws.on('message', (data: unknown) => {
-    const text = typeof data === 'string' ? data : String(data)
+  /**
+   * Whether the opening frame has been read and accepted, and what arrived
+   * between that and the shell existing.
+   *
+   * Starting the shell is not instant — `node-pty` is imported and a process is
+   * spawned — and the page does not wait for it: it sends its first resize a
+   * millisecond behind the opening frame, often in the same packet. This used
+   * to ask `!pty` to decide whether a frame was the opening one, so that
+   * resize was read as a SECOND opening frame, found to carry no ticket, and
+   * the socket was closed in the words for a wrong ticket — to a page whose
+   * ticket was right, while the shell it had been promised started behind the
+   * closing socket with nothing left to end it. Seen in two of four cold
+   * starts while this module was moved onto the shared plumbing. So admission
+   * is its own fact, and what arrives while the shell is starting waits for it.
+   */
+  let admitted = false
+  const early: string[] = []
 
-    if (!pty) {
+  const heard = (text: string) => {
+    if (!admitted) {
       clearTimeout(silent)
       const said = opening(text)
       if (typeof said === 'string') {
@@ -417,6 +436,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
         shut(4403, said)
         return
       }
+      admitted = true
       void (async () => {
         try {
           const nodePty = await import('node-pty')
@@ -451,6 +471,10 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
             if (ws.readyState === ws.OPEN) shut(4000, `the shell exited (${exitCode})`)
           })
           log(`terminal: a shell in ${where}`)
+          /* The socket ended while the shell was starting: nobody is left to
+             end the shell, so it is ended here. */
+          if (ws.readyState !== ws.OPEN) return stop()
+          for (const waiting of early.splice(0)) heard(waiting)
         } catch (error: unknown) {
           const why = error instanceof Error ? error.message : String(error)
           trace.wouldNotStart(held, why)
@@ -458,6 +482,13 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
           shut(4500, 'a shell could not be started on this machine')
         }
       })()
+      return
+    }
+
+    if (!pty) {
+      /* Admitted, and the shell is still starting. Bounded, like everything a
+         socket can make this process hold. */
+      if (early.length < 64) early.push(text)
       return
     }
 
@@ -505,7 +536,9 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
            somebody's shell because a number arrived wrong. */
       }
     }
-  })
+  }
+
+  ws.on('message', (data: unknown) => heard(typeof data === 'string' ? data : String(data)))
 
   ws.on('close', (code: number, reason: Buffer) => {
     trace.closed(held, reason.length > 0 ? reason.toString('utf8') : `code ${code}`)

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useKehikot } from 'kehikot-module-protocol/client/react'
+import { probeServer } from 'kehikot-module-protocol/client'
+import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
 import { NOTHING_HELD, forget, label, restart, show, wanted, type Held } from './view/sessions.ts'
@@ -7,6 +8,11 @@ import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
 
 const ID = 'kehikot.terminal'
+/** What the shared sentences call this module. */
+const NAME = 'Terminal'
+
+/** Try again: ask whether this module's own server is there now. The standing it reports is what redraws. */
+const knock = () => void probeServer()
 
 /**
  * A terminal. That is the whole of it.
@@ -56,13 +62,17 @@ export function App() {
    * handshake, byte-identical to the copy in eleven sibling modules, two of
    * which had independently grown the same two bugs. It is one import now, and
    * the essays that explain the orderings live with the code that depends on
-   * them rather than in twelve places that can drift apart.
+   * them rather than in twelve places that can drift apart. `useHost` is also
+   * what puts the host's theme on `<html>` — the document element rather than
+   * a wrapper, because the shadcn tokens are defined on `:root` and `.dark` —
+   * and what reloads this page, once, when it finds it is older than its
+   * server.
    *
    * Nothing about what this page says on the wire changed: it answers `ready`
    * to every greeting, refuses every `goto` at once, and asks the host nothing,
    * because `uses` is empty and a terminal has no questions.
    */
-  const { context, where } = useKehikot(ID, {
+  const { where, projectPath, theme } = useHost(ID, {
     /*
      * A walk, answered immediately and always with `found: false`.
      *
@@ -79,20 +89,22 @@ export function App() {
     },
   })
 
-  /* The theme, applied to the document element rather than a wrapper, because
-     the shadcn tokens are defined on `:root` and `.dark`. A class on a div
-     would leave the page's own background, painted by `body`, in the other
-     theme. With no host, no class is set and the media query in `index.css`
-     decides — the honest default when nobody has said. */
-  const theme = context?.theme ?? 'light'
-  useEffect(() => {
-    if (!context) return
-    const root = document.documentElement
-    root.classList.toggle('dark', context.theme === 'dark')
-    root.classList.toggle('light', context.theme === 'light')
-  }, [context])
+  /**
+   * The states every module has, drawn by the cover every module shares:
+   * waiting to be greeted, this module's own server gone, and a page older than
+   * its server. `{}` because a terminal works with nothing framing it — opened
+   * on its own it is a shell in the home directory — so "nothing is framing
+   * this page" is not a state it covers.
+   *
+   * A page learns its server has gone from the beacon (`view/trace.ts`) and
+   * from a socket ending (`view/terminal-view.tsx`). Where it is drawn is
+   * `Shells`' to decide, because a shell that has ended still has a screen
+   * worth reading.
+   */
+  const server = useServerStanding()
+  const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={context?.projectPath ?? null} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} cover={cover} />
 }
 
 /**
@@ -128,10 +140,13 @@ export function Shells({
   theme,
   where,
   projectPath,
+  cover = null,
 }: {
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
   projectPath: string | null
+  /** The shared not-ready state — waiting, server down, page stale — or none. */
+  cover?: CoverState | null
 }) {
   const [held, setHeld] = useState<Held>(NOTHING_HELD)
 
@@ -222,7 +237,14 @@ export function Shells({
 
   return (
     <div className="bg-background text-foreground flex h-dvh min-h-0 flex-col">
-      <div className="min-h-0 flex-1">
+      {/* The shared cover, whole, only while there is no shell to look at —
+          which is the moment before the canvas has been heard from. Once a
+          shell has been on screen its last screen stays there: when this
+          module's server stops, what the command printed before it died is
+          the thing somebody wants to read, and the words go in the strip
+          below instead of over it. */}
+      {cover && !current && <Cover state={cover} name={NAME} onRetry={knock} />}
+      <div className="min-h-0 flex-1" hidden={cover !== null && !current}>
         {held.sessions.map((session) => {
           const id = label(session)
           const shown = session.at === held.shown?.at
@@ -242,7 +264,18 @@ export function Shells({
         })}
       </div>
 
-      {dead && current && (
+      {cover && current && (
+        <div className="flex items-center justify-between gap-2 border-t px-2 py-1" role="status" data-cover={cover}>
+          <span className="text-muted-foreground truncate text-[11px]">{COVER_WORDS[cover](NAME)}</span>
+          {cover === 'down' && (
+            <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-xs" onClick={knock}>
+              {TRY_AGAIN}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {dead && current && !cover && (
         <div className="flex items-center justify-between gap-2 border-t px-2 py-1">
           <span className="text-muted-foreground truncate text-[11px]">{standing.why}</span>
           <Button

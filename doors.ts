@@ -1,3 +1,5 @@
+import { establishBuild, refuseTicket, type Reply } from 'kehikot-module-protocol/serve'
+
 import { MANIFEST } from './manifest.ts'
 import { TICKET } from './shell.ts'
 import { fromPage, readStanding, report, standing } from './trace.ts'
@@ -52,28 +54,33 @@ import { fromPage, readStanding, report, standing } from './trace.ts'
  * right way round. Reading a report changes nothing; writing into one is how
  * somebody else's page would fill this process's memory with lines of its own
  * choosing. The ticket is printed into this module's page, so its page has it
- * and nothing cross-origin does.
+ * and nothing cross-origin does. It rides the header every module uses,
+ * `x-module-ticket`, and the refusal is the protocol's — marked, so a page
+ * that is older than this process can tell and reload itself.
+ *
+ * ## What serves these
+ *
+ * The protocol's `doors()`, named in `vite.config.ts`: the manifest at both
+ * well-known paths, the page (generated, with the ticket and this process's
+ * build printed into it), and `answer` below for the rest. The socket is not a
+ * door of that kind and stays this module's own — see `shell.ts`.
  */
 
 export { TICKET } from './shell.ts'
 
-export interface Reply {
-  status: number
-  body: unknown
-  /** How to send it. `text` because a report somebody reads with `curl` should
-      not need a second tool to make it legible. */
-  type?: 'json' | 'text'
-}
+/**
+ * What this process is built from, established once so it is one identity for
+ * the life of the process. `doors()` says it in the manifest, in the health
+ * check's answer, in the page, and as a stamp on every answer — which is how a
+ * page whose shells all ended at once tells a server that restarted from one
+ * that is simply gone.
+ */
+export const BUILD = establishBuild({ version: MANIFEST.version, dir: import.meta.dirname })
 
-/** What a request brings with it, beyond its method and its path. */
-export interface Asked {
-  /** `?json` was on the query string. */
-  json?: boolean
-  /** The parsed body, for the one door that has one. */
-  body?: unknown
-  /** The ticket the body carried, if any. */
-  ticket?: string
-}
+export type { Reply }
+
+/** What a beacon without this process's ticket is told. */
+const NO_TICKET = 'That did not carry this module’s ticket.'
 
 /**
  * Answer one request, or say this is not ours.
@@ -82,7 +89,13 @@ export interface Asked {
  * the path. A module that 404'd everything it did not recognise would break its
  * own client, its own source, and its own HMR socket.
  */
-export function answer(method: string, path: string, asked: Asked = {}): Reply | null {
+export function answer(
+  method: string,
+  path: string,
+  query: URLSearchParams = new URLSearchParams(),
+  body: Record<string, unknown> | null = null,
+  ticket: string | null = null,
+): Reply | null {
   if (path === '/healthz') {
     if (method !== 'GET') {
       return {
@@ -104,8 +117,10 @@ export function answer(method: string, path: string, asked: Asked = {}): Reply |
     if (method !== 'GET') {
       return { status: 405, body: { ok: false, error: `${path} answers GET, and this was a ${method}.` } }
     }
-    if (asked.json) return { status: 200, body: standing(), type: 'json' }
-    return { status: 200, body: report(), type: 'text' }
+    if (query.has('json')) return { status: 200, body: standing() }
+    /* Text, because a report somebody reads with `curl` should not need a
+       second tool to make it legible. */
+    return { status: 200, body: null, raw: { bytes: report(), type: 'text/plain; charset=utf-8' } }
   }
 
   /*
@@ -120,13 +135,12 @@ export function answer(method: string, path: string, asked: Asked = {}): Reply |
     if (method !== 'POST') {
       return { status: 405, body: { ok: false, error: `${path} answers POST, and this was a ${method}.` } }
     }
-    if (asked.ticket !== TICKET) {
-      /* Deliberately not saying which part was wrong. The refusal to a caller
-         with no ticket and to one with the wrong ticket is the same sentence,
-         for the same reason the upgrade refusal in `shell.ts` is a bare 403. */
-      return { status: 403, body: { ok: false, error: 'That did not carry this module’s ticket.' } }
-    }
-    const said = readStanding(asked.body)
+    /* Deliberately not saying which part was wrong. The refusal to a caller
+       with no ticket and to one with the wrong ticket is the same sentence,
+       for the same reason the upgrade refusal in `shell.ts` is a bare 403. */
+    const refused = refuseTicket(ticket, TICKET, NO_TICKET)
+    if (refused) return refused
+    const said = readStanding(body?.standing)
     if (!said) return { status: 400, body: { ok: false, error: 'That was not a standing.' } }
     fromPage(said)
     return { status: 200, body: { ok: true } }

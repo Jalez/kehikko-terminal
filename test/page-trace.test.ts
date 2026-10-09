@@ -117,11 +117,22 @@ describe('the page’s own ring is bounded', () => {
 
 describe('the beacon', () => {
   test('is sent on a timer, carries the ticket, and is a standing the server accepts', async () => {
-    const sent: { url: string; body: unknown }[] = []
+    const sent: { url: string; body: unknown; headers: Record<string, string>; keepalive: boolean }[] = []
     const was = globalThis.fetch
-    globalThis.fetch = ((url: string, init?: { body?: string }) => {
-      sent.push({ url, body: init?.body === undefined ? null : JSON.parse(init.body) })
-      return Promise.resolve({ ok: true } as Response)
+    /* The ticket this process printed into the page, where the protocol's `ask` reads it. */
+    const island = document.createElement('script')
+    island.id = 'ticket'
+    island.type = 'application/json'
+    island.textContent = JSON.stringify('a-ticket')
+    document.body.appendChild(island)
+    globalThis.fetch = ((url: string, init?: { body?: string; headers?: Record<string, string>; keepalive?: boolean }) => {
+      sent.push({
+        url,
+        body: init?.body === undefined ? null : JSON.parse(init.body),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        keepalive: init?.keepalive === true,
+      })
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }))
     }) as typeof fetch
 
     try {
@@ -136,9 +147,14 @@ describe('the beacon', () => {
       const one = sent[0]
       expect(one?.url).toBe('/api/trace/page')
       const held = one?.body as { ticket?: unknown; standing?: unknown }
-      expect(typeof held.ticket).toBe('string')
+      /* In the header every module uses, not in the body. */
+      expect(one?.headers['x-module-ticket']).toBe('a-ticket')
+      expect(held.ticket).toBeUndefined()
+      /* So one sent as the page is torn down still goes. */
+      expect(one?.keepalive).toBe(true)
       expect(readStanding(held.standing)).not.toBeNull()
     } finally {
+      island.remove()
       globalThis.fetch = was
     }
   }, 6000)

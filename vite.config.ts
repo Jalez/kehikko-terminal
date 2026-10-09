@@ -2,13 +2,11 @@ import { resolve } from 'node:path'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { LEGACY_WELL_KNOWN, WELL_KNOWN, legacyManifest } from 'kehikot-module-protocol'
-import { frameAncestors, serves } from 'kehikot-module-protocol/serve'
+import { doors, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { answer } from './doors.ts'
+import { BUILD, answer } from './doors.ts'
 import { ID, MANIFEST, PREFERRED_PORT } from './manifest.ts'
-import { page } from './page.ts'
 import { TICKET, serveTerminals } from './shell.ts'
 
 /**
@@ -28,10 +26,14 @@ import { TICKET, serveTerminals } from './shell.ts'
 let bound = PREFERRED_PORT
 
 /**
- * Every door this module answers on, plus the socket, served by the one process
- * that serves the page.
+ * The socket, beside the doors and served by the one process that serves the
+ * page.
  *
- * ## Why they cannot be a second server
+ * The HTTP doors are the protocol's `doors()`, below. The socket is not one of
+ * them: it needs Vite's own HTTP server, which is Vite's to give, so it is a
+ * plugin of its own.
+ *
+ * ## Why it cannot be a second server
  *
  * A module is ONE ORIGIN or it is nothing: the protocol refuses a manifest
  * whose `entry` points anywhere but the origin that served the manifest, and it
@@ -44,141 +46,54 @@ let bound = PREFERRED_PORT
  * cross-origin to this page, which would put it outside the very origin check
  * that is holding the fence up. The socket has to live where the page lives.
  */
-function doors(): Plugin {
+function sockets(): Plugin {
   return {
-    name: 'terminal-doors',
+    name: 'terminal-sockets',
+    apply: 'serve',
     configureServer(server) {
       const http = server.httpServer
       if (!http) {
         server.config.logger.error(
           'terminal: no HTTP server to attach the terminal socket to. The container will load and no shell will ever open.',
         )
-      } else {
-        /* After `listening`, not before, because the fence needs the port this
-           server BOUND rather than the one it asked for — see `bound` above.
-           Nothing can arrive on the socket before the server is listening, so
-           attaching the upgrade handler here costs nothing. */
-        http.once('listening', () => {
-          const address = http.address()
-          if (address && typeof address === 'object') bound = address.port
-          serveTerminals(http, bound, (line) => server.config.logger.info(line))
-        })
+        return
       }
-
-      server.middlewares.use((request, response, next) => {
-        const url = new URL(request.url ?? '/', `http://127.0.0.1:${bound}`)
-        const path = url.pathname
-        const method = (request.method ?? 'GET').toUpperCase()
-
-        const send = (status: number, body: unknown, type: 'json' | 'text' = 'json') => {
-          response.statusCode = status
-          if (type === 'text') {
-            response.setHeader('content-type', 'text/plain; charset=utf-8')
-            response.end(String(body))
-            return
-          }
-          response.setHeader('content-type', 'application/json; charset=utf-8')
-          response.end(JSON.stringify(body, null, 2))
-        }
-
-        /* Spelled by the protocol package so that this module and every host
-           cannot disagree about it by a character. */
-        if (path === WELL_KNOWN) return send(200, MANIFEST)
-        /* The same manifest in the spelling a host from before the rename asks for. */
-        if (path === LEGACY_WELL_KNOWN) return send(200, legacyManifest(MANIFEST))
-
-        if (path === '/app' || path === '/app/' || path === '/') {
-          void server
-            .transformIndexHtml(request.url ?? '/app', page(TICKET), request.originalUrl)
-            .then((html) => {
-              response.statusCode = 200
-              response.setHeader('content-type', 'text/html; charset=utf-8')
-              /*
-               * Framed by a host and by nothing else — and by nothing at all is
-               * fine too, which is what opening this page directly is.
-               *
-               * `frame-ancestors` is the module's own half of the arrangement:
-               * a host says which origins IT will frame, and this says who may
-               * frame this. It matters more here than anywhere else in the
-               * workspace, because this page holds a ticket to a shell. A page
-               * with a live terminal in it, embedded in a stranger's document,
-               * is a terminal somebody can be tricked into typing into.
-               */
-              response.setHeader(
-                'content-security-policy',
-                frameAncestors(),
-              )
-              response.end(html)
-            })
-            .catch(next)
-          return
-        }
-
-        const ours = path === '/healthz' || path.startsWith('/api/')
-        if (!ours) return next()
-
-        const json = url.searchParams.has('json')
-
-        /*
-         * The one door with a body, read here rather than in `doors.ts`.
-         *
-         * `doors.ts` stays a pure function of what a request SAID — that is
-         * what makes its decisions testable without a server — so the reading
-         * off the socket happens where the socket is.
-         *
-         * Bounded at 64 KB, and the bound is not decoration: this is a door
-         * that appends to a ring buffer this process keeps, and a body with no
-         * ceiling would be a way to make a diagnostic into the memory problem
-         * it was built to find. A page's own beacon is around half a kilobyte.
-         */
-        if (method === 'POST') {
-          let read = 0
-          const parts: Buffer[] = []
-          let refused = false
-          request.on('data', (part: Buffer) => {
-            if (refused) return
-            read += part.length
-            if (read > 64 * 1024) {
-              refused = true
-              send(413, { ok: false, error: 'That body is larger than this module reads.' })
-              request.destroy()
-              return
-            }
-            parts.push(part)
-          })
-          request.on('end', () => {
-            if (refused) return
-            let body: unknown
-            let ticket: string | undefined
-            try {
-              const held: unknown = JSON.parse(Buffer.concat(parts).toString('utf8'))
-              if (typeof held === 'object' && held !== null) {
-                const it = held as Record<string, unknown>
-                body = it.standing
-                ticket = typeof it.ticket === 'string' ? it.ticket : undefined
-              }
-            } catch {
-              /* Not JSON. Falls through to the door, which refuses it — and
-                 refuses it with the same sentence as a wrong ticket, so a
-                 caller cannot use the shape of the reply to learn anything. */
-            }
-            const said = answer(method, path, { json, body, ticket })
-            if (!said) return next()
-            send(said.status, said.body, said.type)
-          })
-          return
-        }
-
-        const reply = answer(method, path, { json })
-        if (!reply) return next()
-        send(reply.status, reply.body, reply.type)
+      /* After `listening`, not before, because the fence needs the port this
+         server BOUND rather than the one it asked for — see `bound` above.
+         Nothing can arrive on the socket before the server is listening, so
+         attaching the upgrade handler here costs nothing. */
+      http.once('listening', () => {
+        const address = http.address()
+        if (address && typeof address === 'object') bound = address.port
+        serveTerminals(http, bound, (line) => server.config.logger.info(line))
       })
     },
   }
 }
 
+/**
+ * The doors: the manifest at both well-known paths, `/app` (generated, with
+ * the write ticket and this process's build printed into it, `no-store`,
+ * `frame-ancestors`), and `/healthz` and `/api/*` through `answer` in
+ * `doors.ts`. See the protocol's docs/module-plumbing.md.
+ *
+ * `/app` is claimed here before Vite's resolver sees it, which matters: under
+ * Vite dev an extensionless `/app` next to a `src/app.tsx` can answer `200
+ * text/javascript`, a document a browser loads happily and runs nothing in.
+ *
+ * A beacon is a few hundred bytes, so the body bound is this module's own: 64
+ * KiB, past which the answer is a 413 and nothing is read.
+ */
+const MOST_READ = 64 * 1024
+
 export default defineConfig({
-  plugins: [serves({ id: ID, prefer: PREFERRED_PORT }), doors(), react(), tailwindcss()],
+  plugins: [
+    serves({ id: ID, prefer: PREFERRED_PORT }),
+    sockets(),
+    doors({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Terminal', ticket: TICKET }, maxBodyBytes: MOST_READ }),
+    react(),
+    tailwindcss(),
+  ],
   resolve: { alias: { '@': resolve(import.meta.dirname, 'src') } },
   /**
    * Loopback, explicitly, and no `cors` line anywhere in this file.
