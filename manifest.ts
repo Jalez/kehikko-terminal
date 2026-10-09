@@ -147,6 +147,8 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   entry: '/app',
   modes: [{ id: 'terminal', label: 'Terminal', scope: 'epic' }],
   extensions: { emits: [], consumes: [] },
+  /* Why this module has nothing to narrow by the parts of an epic. */
+  partless: 'A shell: nothing in it belongs to an epic.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
     uses: [],
