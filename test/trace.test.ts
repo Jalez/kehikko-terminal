@@ -257,7 +257,7 @@ describe('the doors', () => {
   test('through the real doors: the header carries the ticket, the page carries it and the build, and nothing is cached', async () => {
     const through = doorsFetch({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Terminal', ticket: TICKET }, maxBodyBytes: 64 * 1024 })
     const post = (headers: Record<string, string>, body: unknown) =>
-      through(new Request('http://127.0.0.1/api/trace/page', { method: 'POST', headers, body: JSON.stringify(body) }))
+      through(new Request('http://127.0.0.1/api/trace/page', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }))
 
     expect((await post({ [TICKET_HEADER]: TICKET }, { standing: base({}) }))?.status).toBe(200)
     /* The ticket in the body, where this module used to carry it, is no ticket. */
