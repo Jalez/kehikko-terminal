@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import type { HeaderItemInput } from 'kehikot-module-protocol'
 import { probeServer } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
@@ -6,6 +7,10 @@ import { TerminalView, type Standing } from './view/terminal-view.tsx'
 import { NOTHING_HELD, forget, label, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
+import { HeaderFallback, headerDrawn, rememberHeaderDrawn } from '@/header-fallback'
+
+/** One press on a header item: nothing or `true` for taken, a sentence for not taken, and why. */
+type Press = (press: { item: string; value?: string | boolean }) => string | boolean | void
 
 const ID = 'kehikot.terminal'
 /** What the shared sentences call this module. */
@@ -72,7 +77,15 @@ export function App() {
    * to every greeting, refuses every `goto` at once, and asks the host nothing,
    * because `uses` is empty and a terminal has no questions.
    */
-  const { where, projectPath, theme } = useHost(ID, {
+  const presses = useRef<Press | null>(null)
+  /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
+  const [drawn, setDrawn] = useState(headerDrawn)
+  const { where, projectPath, theme, header } = useHost(ID, {
+    onPress: (press) => {
+      rememberHeaderDrawn()
+      setDrawn(true)
+      return presses.current ? presses.current(press) : 'There is no shell here yet.'
+    },
     /*
      * A walk, answered immediately and always with `found: false`.
      *
@@ -104,7 +117,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} cover={cover} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} />
 }
 
 /**
@@ -141,12 +154,21 @@ export function Shells({
   where,
   projectPath,
   cover = null,
+  header,
+  presses,
+  drawn = false,
 }: {
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
   projectPath: string | null
   /** The shared not-ready state — waiting, server down, page stale — or none. */
   cover?: CoverState | null
+  /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
+  header?: (items: HeaderItemInput[]) => void
+  /** Where the page puts what takes a press on one of them. */
+  presses?: MutableRefObject<Press | null>
+  /** Whether a host has pressed one: such a host draws the header. */
+  drawn?: boolean
 }) {
   const [held, setHeld] = useState<Held>(NOTHING_HELD)
 
@@ -225,18 +247,68 @@ export function Shells({
   const standing = current ? standings[label(current)] : undefined
 
   /*
-   * The one control on the page, and it is only drawn when the shell is gone.
-   *
-   * A terminal with a toolbar is a terminal with less terminal in it. While the
-   * shell is running there is nothing here to press, because everything you
-   * could want to do is a thing you type. When it EXITS the container would
-   * otherwise be a dead rectangle with no way out, and that is the one moment a
-   * button earns its pixels.
+   * New shell is not a control on the page: it is the header's Run item, and it is the only thing a
+   * header has to say about a terminal. A terminal with a toolbar is a terminal with less terminal
+   * in it, and while the shell runs there is nothing to press, because everything you could want
+   * to do is a thing you type. When it EXITS the container would otherwise be a dead rectangle with
+   * no way out; the host's Run menu then says why it ended, and takes the press.
    */
   const dead = standing?.at === 'closed'
 
+  /* What a press on New shell does. Recorded, because pressing it is the single most informative
+     thing somebody does while the container is stuck: "Clicking New shell doesn't fix it either"
+     rules out the shell, the pty and the socket all at once — but only if the trace can show that
+     the press HAPPENED. */
+  const restartHere = (): string | true => {
+    if (!current) return 'There is no shell here yet.'
+    if (!dead) return 'The shell here is still running.'
+    note(`somebody pressed New shell in ${current.at ?? 'the home directory'}`)
+    setHeld((before) => restart(before, current.at))
+    return true
+  }
+  const restartRef = useRef(restartHere)
+  restartRef.current = restartHere
+
+  /*
+   * The header: one Run item, declared again only when it is a different item — the shell ending,
+   * or another shell coming on screen. Nothing a person types changes it. With no shell yet, or a
+   * cover over the page, there is nothing to offer and none is declared.
+   */
+  const items = useMemo<HeaderItemInput[]>(() => {
+    if (!current || (cover && !current)) return []
+    const why = standing?.at === 'closed' ? standing.why : null
+    return [
+      {
+        kind: 'run',
+        id: 'new-shell',
+        label: 'New shell',
+        icon: 'terminal',
+        /* Failed is what the Run trigger shows without the menu being opened: this shell has ended. */
+        state: dead ? 'failed' : 'idle',
+        result: why ? (why.length > 32 ? `${why.slice(0, 31)}…` : why) : null,
+        disabled: dead ? null : 'The shell here is still running.',
+      },
+    ]
+  }, [current?.at, Boolean(current), cover === null, dead, standing?.at === 'closed' ? standing.why : null])
+  const itemsKey = JSON.stringify(items)
+  useEffect(() => {
+    header?.(JSON.parse(itemsKey) as HeaderItemInput[])
+  }, [header, itemsKey])
+  useEffect(() => () => header?.([]), [header])
+  useEffect(() => {
+    if (!presses) return
+    presses.current = ({ item }) => (item === 'new-shell' ? restartRef.current() : 'That is not something a terminal has.')
+    return () => {
+      presses.current = null
+    }
+  }, [presses])
+
   return (
-    <div className="bg-background text-foreground flex h-dvh min-h-0 flex-col">
+    <div className="bg-background text-foreground relative flex h-dvh min-h-0 flex-col">
+      {/* The page's own way to New shell, only for a page no host draws for, and only while the shell is gone. */}
+      {dead && current && !cover && !drawn ? (
+        <HeaderFallback items={items} onPress={(press) => presses?.current?.(press) ?? restartRef.current()} className="absolute top-1 right-3" />
+      ) : null}
       {/* The shared cover, whole, only while there is no shell to look at —
           which is the moment before the canvas has been heard from. Once a
           shell has been on screen its last screen stays there: when this
@@ -275,36 +347,6 @@ export function Shells({
         </div>
       )}
 
-      {dead && current && !cover && (
-        <div className="flex items-center justify-between gap-2 border-t px-2 py-1">
-          <span className="text-muted-foreground truncate text-[11px]">{standing.why}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 shrink-0 px-2 text-xs"
-            onClick={() => {
-              /* Recorded, because pressing this is the single most informative
-                 thing somebody does while the container is stuck. "Clicking New
-                 shell doesn't fix it either" rules out the shell, the pty and
-                 the socket all at once — but only if the trace can show that
-                 the press HAPPENED, that a second shell really started, and
-                 that its bytes arrived and still did not appear. Without this
-                 line the report cannot tell a press that did nothing from a
-                 press that never landed.
-
-                 Worth knowing while reading a report: this button only exists
-                 while the shown session's shell has closed. If somebody was
-                 able to press it, the socket had already ended — which is
-                 itself a fact about the freeze, and the ring above will say
-                 what closed it. */
-              note(`somebody pressed New shell in ${current.at ?? 'the home directory'}`)
-              setHeld((before) => restart(before, current.at))
-            }}
-          >
-            New shell
-          </Button>
-        </div>
-      )}
     </div>
   )
 }
