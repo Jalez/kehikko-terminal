@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { probeServer, ticket } from 'kehikot-module-protocol/client'
+import { letGo } from './let-go.ts'
 import { note, seen } from './trace.ts'
 
 /**
@@ -484,18 +485,31 @@ export function TerminalView({
 
     /* A container that was already laid out when this mounted — the common case
        once a canvas is settled — has its size now and should not wait for an
-       observation that may not come. */
-    if (ready()) connect()
+       observation that may not come.
+
+       One turn later, and not on this line: under StrictMode React runs this
+       effect, its cleanup, and the effect again, all before anything else gets
+       a turn. Connecting here opened a socket for the first of those and closed
+       it a moment later, still connecting, which the browser logged as an error
+       on every load. The cleanup cancels this, so the view that stays is the
+       only one that ever opens a socket. Nothing typed is lost to the wait:
+       `waiting` holds it, and a keystroke connects by itself. */
+    const soon = setTimeout(() => {
+      if (ready()) connect()
+    }, 0)
 
     return () => {
+      clearTimeout(soon)
       resized.disconnect()
       seen.observerGone()
       drawn.dispose()
       typing.dispose()
       /* Closed before the terminal is disposed, so no late frame can arrive for
          an emulator that is gone. A container unmounted before it was ever wide
-         enough has no socket to close. */
-      socket?.close()
+         enough has no socket to close. One that is still connecting is let go
+         of rather than closed — see `let-go.ts` — and counted out here, since
+         its own `close` will reach nobody. */
+      if (socket && letGo(socket)) seen.socketClosed('the view went away while it was connecting')
       terminal.dispose()
       seen.emulatorDisposed()
       seen.viewDisposed()
