@@ -2,6 +2,8 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { act, cleanup, render } from '@testing-library/react'
 import { useEffect } from 'react'
 
+import type { HeaderItemInput } from 'kehikot-module-protocol'
+
 import type { Standing } from '../src/view/terminal-view.tsx'
 
 /**
@@ -48,6 +50,25 @@ mock.module('../src/view/terminal-view.tsx', () => ({
 
 const { Shells } = await import('../src/app.tsx')
 
+/* What the page declared to the host's header, whole each time, and where a press on it is taken. */
+let declared: HeaderItemInput[][] = []
+const presses: { current: ((press: { item: string; value?: string | boolean }) => string | boolean | void) | null } = { current: null }
+const header = (items: HeaderItemInput[]) => {
+  declared.push(items)
+}
+const press = (item: string) => {
+  const out: { answer: unknown } = { answer: undefined }
+  act(() => {
+    out.answer = presses.current?.({ item })
+  })
+  return out.answer
+}
+const latest = () => declared.at(-1)?.find((one) => one.id === 'new-shell')
+/** Shells as a host that draws the header frames it. */
+const Hosted = (props: Partial<Parameters<typeof Shells>[0]> & { projectPath: string | null }) => (
+  <Shells theme="light" where="hosted" header={header} presses={presses} drawn {...props} />
+)
+
 const A = '/Users/someone/Projects/a'
 const B = '/Users/someone/Projects/b'
 
@@ -56,6 +77,8 @@ afterEach(() => {
   mounted.length = 0
   unmounted.length = 0
   tell.clear()
+  declared = []
+  presses.current = null
 })
 
 /** What is on screen, by folder, and which of them is the shown one. */
@@ -115,7 +138,9 @@ describe('a shell per project', () => {
 
     rerender(<Shells theme="light" where="hosted" projectPath={A} />)
     expect(container.querySelector('[data-cover]')).toBeNull()
-    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['New shell'])
+    /* The page has no button of its own for it: New shell is the header's. This host has pressed nothing, so the
+       one control a page keeps for a host that draws no header is all there is. */
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['⋯'])
     expect(mounted).toEqual([A])
   })
 
@@ -160,28 +185,53 @@ describe('an epic is not a key', () => {
 })
 
 describe('when a shell dies', () => {
-  test('the dead bar is drawn for the shown session only, and New shell replaces just that one', () => {
-    const { container, rerender, getByText, queryByText } = render(
-      <Shells theme="light" where="hosted" projectPath={A} />,
-    )
-    rerender(<Shells theme="light" where="hosted" projectPath={B} />)
+  test('New shell is the header’s Run item: disabled while the shell runs, failed and pressable once it has ended, and it replaces just that session', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} />)
+    expect(latest()).toMatchObject({ kind: 'run', label: 'New shell', state: 'idle', disabled: 'The shell here is still running.' })
+    expect(String(press('new-shell'))).toContain('still running')
+    expect(unmounted).toEqual([])
 
-    /* A dies while B is on screen: no bar, because the person is not looking
-       at A. */
+    rerender(<Hosted projectPath={B} />)
+    /* A dies while B is on screen: it is not the shell the header speaks for. */
     act(() => tell.get(A)?.({ at: 'closed', why: 'the shell exited (0)' }))
-    expect(queryByText('New shell')).toBeNull()
+    expect(latest()).toMatchObject({ state: 'idle' })
 
-    /* Come back to A: the bar is there. */
-    rerender(<Shells theme="light" where="hosted" projectPath={A} />)
-    expect(getByText('the shell exited (0)')).toBeTruthy()
-
-    act(() => {
-      getByText('New shell').click()
-    })
+    /* Come back to A: the item says it ended, and why, and can be pressed. */
+    rerender(<Hosted projectPath={A} />)
+    expect(latest()).toMatchObject({ state: 'failed', result: 'the shell exited (0)', disabled: null })
+    expect(container.textContent).not.toContain('the shell exited')
+    expect(press('new-shell')).toBe(true)
     /* A was remounted — a fresh shell in the same folder — and B was not. */
     expect(unmounted).toEqual([A])
     expect(mounted).toEqual([A, B, A])
     expect(onScreen(container).shown).toEqual([A])
+  })
+
+  test('an item it has not got is not taken', () => {
+    render(<Hosted projectPath={A} />)
+    expect(String(press('nothing'))).toContain('not something a terminal has')
+  })
+
+  test('typing declares nothing: a shell that is running says the same thing for as long as it runs', () => {
+    render(<Hosted projectPath={A} />)
+    const count = declared.length
+    expect(count).toBeGreaterThan(0)
+    act(() => tell.get(A)?.({ at: 'live' }))
+    act(() => tell.get(A)?.({ at: 'live' }))
+    expect(declared.length).toBe(count)
+  })
+
+  test('no header is declared before there is a shell, and it is taken away with the page', () => {
+    const { unmount } = render(<Hosted projectPath={null} where="listening" />)
+    expect(declared.at(-1) ?? []).toEqual([])
+    unmount()
+  })
+
+  test('on a page no host draws for, a dead shell has the page’s own control, and a live one has none', () => {
+    const { container } = render(<Shells theme="light" where="unhosted" projectPath={A} header={header} presses={presses} />)
+    expect(container.querySelector('[data-header-fallback]')).toBeNull()
+    act(() => tell.get(A)?.({ at: 'closed', why: 'the shell exited (0)' }))
+    expect(container.querySelector('[data-header-fallback]')).not.toBeNull()
   })
 
   test('a dead session the canvas moves away from is forgotten, so it holds nothing', () => {
