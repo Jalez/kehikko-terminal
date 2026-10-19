@@ -4,7 +4,7 @@ import { probeServer } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
-import { NOTHING_HELD, forget, label, restart, show, wanted, type Held } from './view/sessions.ts'
+import { NOTHING_HELD, dismiss, forget, label, moved, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
 import { HeaderFallback, headerDrawn, rememberHeaderDrawn } from '@/header-fallback'
@@ -80,7 +80,7 @@ export function App() {
   const presses = useRef<Press | null>(null)
   /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
   const [drawn, setDrawn] = useState(headerDrawn)
-  const { where, projectPath, theme, header } = useHost(ID, {
+  const { where, projectPath, projectId, theme, header } = useHost(ID, {
     onPress: (press) => {
       rememberHeaderDrawn()
       setDrawn(true)
@@ -117,7 +117,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} />
 }
 
 /**
@@ -153,6 +153,7 @@ export function Shells({
   theme,
   where,
   projectPath,
+  projectId = null,
   cover = null,
   header,
   presses,
@@ -161,6 +162,11 @@ export function Shells({
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
   projectPath: string | null
+  /**
+   * The project's permanent id (protocol 2.1.0), or null from an older host. A session is known by
+   * it, so the same id at a new `projectPath` is the same project whose folder was renamed or moved.
+   */
+  projectId?: string | null
   /** The shared not-ready state — waiting, server down, page stale — or none. */
   cover?: CoverState | null
   /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
@@ -194,7 +200,7 @@ export function Shells({
   /* The last place the canvas named, so that the same answer twice — which
      `StrictMode` produces on every mount by running effects twice — decides
      nothing twice and writes nothing twice onto the trace. */
-  const decided = useRef<{ at: string | null } | null>(null)
+  const decided = useRef<{ key: string | null; at: string | null } | null>(null)
 
   /*
    * The canvas moved, or spoke for the first time.
@@ -211,25 +217,30 @@ export function Shells({
    * somebody reads as "it happened twice".
    */
   useEffect(() => {
-    const want = wanted(where, { projectPath })
+    const want = wanted(where, { projectPath, projectId })
     if (!want) return
-    if (decided.current && decided.current.at === want.at) return
+    if (decided.current && decided.current.key === want.key && decided.current.at === want.at) return
     decided.current = want
 
     const before = holding.current
-    const fresh = !before.sessions.some((s) => s.at === want.at)
-    const shown = show(before, want.at, Date.now())
+    const fresh = !before.sessions.some((s) => s.key === want.key)
+    const shown = show(before, want, Date.now())
 
     /* A dead session the person is leaving holds nothing: no socket, no
        shell. Forgotten here — after the switch, since `forget` refuses to
        drop whatever is on screen — so it cannot sit in the report as a view
        that is live for no reason. */
-    const leaving = before.sessions.find((s) => s.at === before.shown?.at)
+    const leaving = before.sessions.find((s) => s.key === before.shown?.key)
     if (leaving && known.current[label(leaving)]?.at === 'closed') {
-      shown.held = forget(shown.held, leaving.at)
+      shown.held = forget(shown.held, leaving.key)
     }
 
-    note(
+    /* The same project at another folder: renamed or moved while its shell ran. The shell is kept,
+       attached and on screen — macOS keeps a running process's working directory through a rename —
+       and only the next shell opens in the new folder. */
+    if (shown.relinked) {
+      note(`the project's folder moved from ${shown.relinked.from} to ${shown.relinked.to}; keeping its shell, the next one opens there`)
+    } else note(
       `the canvas is about ${want.at ?? 'no project'}; ${fresh ? 'opening a shell there' : 'showing its shell'} (${
         shown.held.sessions.length
       } held)`,
@@ -241,9 +252,9 @@ export function Shells({
     }
     seen.holding(shown.held.sessions.length)
     setHeld(shown.held)
-  }, [where, projectPath])
+  }, [where, projectPath, projectId])
 
-  const current = held.sessions.find((s) => s.at === held.shown?.at) ?? null
+  const current = held.sessions.find((s) => s.key === held.shown?.key) ?? null
   const standing = current ? standings[label(current)] : undefined
 
   /*
@@ -255,15 +266,25 @@ export function Shells({
    */
   const dead = standing?.at === 'closed'
 
+  /* The shell on screen was opened in a folder its project has since left (renamed or moved). It
+     still works there, under the old name; New shell is offered so the person can start fresh in the
+     new folder — by their press, never on its own. */
+  const relocated = current !== null && current.now !== current.at
+  const renamedTo = moved(current)
+
   /* What a press on New shell does. Recorded, because pressing it is the single most informative
      thing somebody does while the container is stuck: "Clicking New shell doesn't fix it either"
      rules out the shell, the pty and the socket all at once — but only if the trace can show that
      the press HAPPENED. */
   const restartHere = (): string | true => {
     if (!current) return 'There is no shell here yet.'
-    if (!dead) return 'The shell here is still running.'
-    note(`somebody pressed New shell in ${current.at ?? 'the home directory'}`)
-    setHeld((before) => restart(before, current.at))
+    if (!dead && !relocated) return 'The shell here is still running.'
+    note(
+      dead
+        ? `somebody pressed New shell in ${current.now ?? 'the home directory'}`
+        : `somebody pressed New shell to leave ${current.at} for its new folder ${current.now}`,
+    )
+    setHeld((before) => restart(before, current.key))
     return true
   }
   const restartRef = useRef(restartHere)
@@ -286,10 +307,12 @@ export function Shells({
         /* Failed is what the Run trigger shows without the menu being opened: this shell has ended. */
         state: dead ? 'failed' : 'idle',
         result: why ? (why.length > 32 ? `${why.slice(0, 31)}…` : why) : null,
-        disabled: dead ? null : 'The shell here is still running.',
+        disabled: dead || relocated ? null : 'The shell here is still running.',
+        /* Pressed on a shell that is still running (its folder was renamed), it ends that shell: asked first. */
+        confirm: !dead && relocated,
       },
     ]
-  }, [current?.at, Boolean(current), cover === null, dead, standing?.at === 'closed' ? standing.why : null])
+  }, [current?.key, Boolean(current), cover === null, dead, relocated, standing?.at === 'closed' ? standing.why : null])
   const itemsKey = JSON.stringify(items)
   useEffect(() => {
     header?.(JSON.parse(itemsKey) as HeaderItemInput[])
@@ -316,10 +339,27 @@ export function Shells({
           the thing somebody wants to read, and the words go in the strip
           below instead of over it. */}
       {cover && !current && <Cover state={cover} name={NAME} onRetry={knock} />}
+      {current && renamedTo !== null && (
+        /* One line, said once per rename, until the person dismisses it. Text only: the folder is a string. */
+        <div className="flex items-center justify-between gap-2 border-b px-2 py-1" role="status" data-renamed={renamedTo}>
+          <span className="text-muted-foreground min-w-0 text-[11px]">
+            This folder was renamed to {renamedTo}. The shell still works in it but shows the old name; open a new shell to start fresh.
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 shrink-0 px-2 text-xs"
+            aria-label="Dismiss"
+            onClick={() => setHeld((before) => dismiss(before, current.key))}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       <div className="min-h-0 flex-1" hidden={cover !== null && !current}>
         {held.sessions.map((session) => {
           const id = label(session)
-          const shown = session.at === held.shown?.at
+          const shown = session.key === held.shown?.key
           return (
             /* `hidden` rather than unmounted: see the essay above. The wrapper
                carries the attribute so that the view's own holder keeps its

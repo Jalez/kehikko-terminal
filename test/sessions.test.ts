@@ -3,8 +3,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   MOST_KEPT,
   NOTHING_HELD,
+  dismiss,
   forget,
   label,
+  moved,
   restart,
   show,
   wanted,
@@ -33,15 +35,15 @@ describe('what the canvas says, reduced to what a shell is about', () => {
   })
 
   test('unframed means the home directory, once', () => {
-    expect(wanted('unhosted', null)).toEqual({ at: null })
+    expect(wanted('unhosted', null)).toEqual({ key: null, at: null })
   })
 
   test('framed with a project means that project', () => {
-    expect(wanted('hosted', { projectPath: A })).toEqual({ at: A })
+    expect(wanted('hosted', { projectPath: A })).toEqual({ key: A, at: A })
   })
 
   test('framed with no project open means home, and that is a decision rather than a wait', () => {
-    expect(wanted('hosted', { projectPath: null })).toEqual({ at: null })
+    expect(wanted('hosted', { projectPath: null })).toEqual({ key: null, at: null })
   })
 
   test('the epic is not read: the same project with any epic is the same answer', () => {
@@ -58,7 +60,7 @@ describe('two projects, two sessions', () => {
   test('the first project opens a session and shows it', () => {
     const { held, evicted } = show(NOTHING_HELD, A, 1)
     expect(held.sessions.map((s) => s.at)).toEqual([A])
-    expect(held.shown).toEqual({ at: A })
+    expect(held.shown).toEqual({ key: A })
     expect(evicted).toEqual([])
   })
 
@@ -66,7 +68,7 @@ describe('two projects, two sessions', () => {
     const one = show(NOTHING_HELD, A, 1).held
     const two = show(one, B, 2).held
     expect(two.sessions.map((s) => s.at)).toEqual([A, B])
-    expect(two.shown).toEqual({ at: B })
+    expect(two.shown).toEqual({ key: B })
   })
 
   test('coming back shows the session that was already there rather than a new one', () => {
@@ -74,7 +76,7 @@ describe('two projects, two sessions', () => {
     const two = show(one, B, 2).held
     const back = show(two, A, 3).held
     expect(back.sessions).toHaveLength(2)
-    expect(back.shown).toEqual({ at: A })
+    expect(back.shown).toEqual({ key: A })
     /* Same generation: the same component, the same socket, the same shell. */
     expect(back.sessions.find((s) => s.at === A)?.generation).toBe(1)
   })
@@ -94,12 +96,12 @@ describe('two projects, two sessions', () => {
 
 describe('a session label', () => {
   test('names the folder and the generation, so a restarted shell is a new key', () => {
-    expect(label({ at: A, generation: 1 })).toBe(`${A}#1`)
-    expect(label({ at: null, generation: 2 })).toBe('home#2')
+    expect(label({ key: A, generation: 1 })).toBe(`${A}#1`)
+    expect(label({ key: null, generation: 2 })).toBe('home#2')
   })
 
   test('cannot collide between home and a project, because a project path is absolute', () => {
-    expect(label({ at: '/home', generation: 1 })).not.toBe(label({ at: null, generation: 1 }))
+    expect(label({ key: '/home', generation: 1 })).not.toBe(label({ key: null, generation: 1 }))
   })
 })
 
@@ -143,7 +145,7 @@ describe('the bound, which is what stops this being a leak', () => {
     expect(after.sessions).toHaveLength(MOST_KEPT)
     expect(evicted.map((s) => s.at)).toEqual([project(1)])
     expect(after.sessions.some((s) => s.at === project(0))).toBe(true)
-    expect(after.shown).toEqual({ at: project(MOST_KEPT) })
+    expect(after.shown).toEqual({ key: project(MOST_KEPT) })
   })
 
   test('what was evicted is returned, so it can be said out loud', () => {
@@ -154,5 +156,51 @@ describe('the bound, which is what stops this being a leak', () => {
       if (n < MOST_KEPT) expect(step.evicted).toEqual([])
       else expect(step.evicted).toHaveLength(1)
     }
+  })
+})
+
+describe('a project known by its id, whose folder is renamed while its shell runs', () => {
+  const ID = '6f1c2a9e-0b4d-4c55-9a51-2f7e1d3c8b10'
+  const OTHER = 'a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d'
+  const RENAMED = '/Users/someone/Projects/a-renamed'
+
+  test('the id is the key when the host sends one, and the folder is still where it opens', () => {
+    expect(wanted('hosted', { projectPath: A, projectId: ID })).toEqual({ key: ID, at: A })
+    expect(wanted('hosted', { projectPath: A, projectId: null })).toEqual({ key: A, at: A })
+  })
+
+  test('the same id at a new folder is a relink: the same session, still opened where it was, told where it is now', () => {
+    const one = show(NOTHING_HELD, { key: ID, at: A }, 1).held
+    const step = show(one, { key: ID, at: RENAMED }, 2)
+    expect(step.relinked).toEqual({ from: A, to: RENAMED })
+    expect(step.held.sessions).toHaveLength(1)
+    const [session] = step.held.sessions
+    /* Same generation: the same component, socket and shell. Never restarted on its own. */
+    expect(session).toMatchObject({ key: ID, at: A, now: RENAMED, generation: 1 })
+    expect(label(session!)).toBe(label(one.sessions[0]!))
+    expect(moved(session)).toBe(RENAMED)
+  })
+
+  test('the line goes when dismissed, and New shell opens in the new folder', () => {
+    const relinked = show(show(NOTHING_HELD, { key: ID, at: A }, 1).held, { key: ID, at: RENAMED }, 2).held
+    expect(moved(dismiss(relinked, ID).sessions[0])).toBeNull()
+    const fresh = restart(relinked, ID).sessions[0]!
+    expect(fresh).toMatchObject({ at: RENAMED, now: RENAMED, generation: 2 })
+    expect(moved(fresh)).toBeNull()
+  })
+
+  test('a different id is a different project, even at the same folder', () => {
+    const one = show(NOTHING_HELD, { key: ID, at: A }, 1).held
+    const step = show(one, { key: OTHER, at: B }, 2)
+    expect(step.relinked).toBeNull()
+    expect(step.held.sessions.map((s) => s.key)).toEqual([ID, OTHER])
+    expect(step.held.sessions.map((s) => moved(s))).toEqual([null, null])
+  })
+
+  test('without an id a new folder is a new project, as before', () => {
+    const one = show(NOTHING_HELD, A, 1).held
+    const step = show(one, RENAMED, 2)
+    expect(step.relinked).toBeNull()
+    expect(step.held.sessions.map((s) => s.at)).toEqual([A, RENAMED])
   })
 })

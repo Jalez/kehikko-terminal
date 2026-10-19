@@ -125,24 +125,31 @@ describe('where a shell opens', () => {
    * thing that was wrong.
    */
   test('the project folder is used when it is a real directory', () => {
-    expect(openable(process.cwd(), '/tmp')).toBe(process.cwd())
+    expect(openable(process.cwd(), '/tmp')).toEqual({ ok: true, cwd: process.cwd() })
   })
 
   test('nothing asked for means the fallback', () => {
-    expect(openable(null, '/tmp')).toBe('/tmp')
+    expect(openable(null, '/tmp')).toEqual({ ok: true, cwd: '/tmp' })
   })
 
-  /* The old behaviour, reached rather than crashed into: every shell opened at
-     home before any of this existed, so the fallback is not a new failure. */
-  test('a directory that is not there falls back rather than throwing', () => {
-    expect(openable('/no/such/place/at/all', '/tmp')).toBe('/tmp')
+  /* A folder renamed or moved while the page still held its old path used to open a shell at home
+     that looked like the project's. Now it is refused, and the sentence names the folder. */
+  test('a directory that is not there is refused and said, not silently swapped for the fallback', () => {
+    const place = openable('/no/such/place/at/all', '/tmp')
+    expect(place.ok).toBe(false)
+    if (!place.ok) {
+      expect(place.why).toContain('/no/such/place/at/all')
+      expect(place.why).toContain('not there')
+    }
   })
 
-  test('a file is not a directory', () => {
-    expect(openable(`${process.cwd()}/package.json`, '/tmp')).toBe('/tmp')
+  test('a file is not a directory, and that is said too', () => {
+    const place = openable(`${process.cwd()}/package.json`, '/tmp')
+    expect(place.ok).toBe(false)
+    if (!place.ok) expect(place.why).toContain('is not a folder')
   })
 
   test('an empty string is treated as nothing asked for', () => {
-    expect(openable('', '/tmp')).toBe('/tmp')
+    expect(openable('', '/tmp')).toEqual({ ok: true, cwd: '/tmp' })
   })
 })
