@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 
 import { probeServer, ticket } from 'kehikot-module-protocol/client'
 import { letGo } from './let-go.ts'
+import { settleSize } from './settle-size.ts'
 import { note, seen } from './trace.ts'
 
 /**
@@ -322,6 +323,8 @@ export function TerminalView({
             rows: terminal.rows,
           }),
         )
+        /* The pty opens at this size: a settle that fits to it has nothing to say. */
+        settled.known({ cols: terminal.cols, rows: terminal.rows })
         move({ at: 'live' })
         terminal.focus()
         /* Whatever was typed while this was opening, in the order it was typed
@@ -445,7 +448,43 @@ export function TerminalView({
      * line in the wrong place — the single most common way a browser terminal
      * is built badly. So the fit is measured here and the NEW size is sent, and
      * the pty is resized to match rather than left at its opening guess.
+     *
+     * Once the box has held still, and not on every frame of it moving: see
+     * `settle-size.ts`. Each size sent is a SIGWINCH, and a program that redraws
+     * on one (Claude Code reprints its conversation) left a copy in the
+     * scrollback for every frame of the host's 200ms grid animation.
      */
+    const settled = settleSize(
+      () => {
+        /*
+         * A container with no size is not a container two characters wide.
+         *
+         * Folding a container hides its frame, which fires an observation at zero.
+         * Fitting to that shrank the emulator to about two columns while nobody
+         * could see it, the pty was told the clamped minimum, and the shell drew
+         * its next prompt into a world neither of them agreed on. Unfolding fired
+         * another observation and put the size right — too late for the prompt
+         * already on screen, which is why the staircase appeared on UNFOLD
+         * having been caused on fold.
+         *
+         * The same guard the connect path uses, for the same reason: an absent
+         * measurement is not a small measurement, and the honest response to it
+         * is to do nothing at all.
+         */
+        if (!usable()) return null
+        try {
+          fit.fit()
+        } catch {
+          /* Measured at zero while being laid out. Nothing to do; the next
+             observation will have a real size. */
+          return null
+        }
+        return { cols: terminal.cols, rows: terminal.rows }
+      },
+      (size) => {
+        if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ r: size }))
+      },
+    )
     const resized = new ResizeObserver(() => {
       /* The first observation with a real size is what starts the shell. After
          that this is only the resize path. */
@@ -453,32 +492,7 @@ export function TerminalView({
         if (ready()) connect()
         return
       }
-      /*
-       * A container with no size is not a container two characters wide.
-       *
-       * Folding a container hides its frame, which fires an observation at zero.
-       * Fitting to that shrank the emulator to about two columns while nobody
-       * could see it, the pty was told the clamped minimum, and the shell drew
-       * its next prompt into a world neither of them agreed on. Unfolding fired
-       * another observation and put the size right — too late for the prompt
-       * already on screen, which is why the staircase appeared on UNFOLD
-       * having been caused on fold.
-       *
-       * The same guard the connect path uses, for the same reason: an absent
-       * measurement is not a small measurement, and the honest response to it
-       * is to do nothing at all.
-       */
-      if (!usable()) return
-      try {
-        fit.fit()
-      } catch {
-        /* Measured at zero while being laid out. Nothing to do; the next
-           observation will have a real size. */
-        return
-      }
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ r: { cols: terminal.cols, rows: terminal.rows } }))
-      }
+      settled.observe()
     })
     resized.observe(node)
     seen.observerMade()
@@ -501,6 +515,7 @@ export function TerminalView({
     return () => {
       clearTimeout(soon)
       resized.disconnect()
+      settled.dispose()
       seen.observerGone()
       drawn.dispose()
       typing.dispose()
