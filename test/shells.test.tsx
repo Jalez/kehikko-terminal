@@ -242,3 +242,54 @@ describe('when a shell dies', () => {
     expect(unmounted).toEqual([A])
   })
 })
+
+describe('a project folder renamed while its shell runs', () => {
+  const ID = '6f1c2a9e-0b4d-4c55-9a51-2f7e1d3c8b10'
+  const OTHER = 'a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d'
+  const RENAMED = '/Users/someone/Projects/a-renamed'
+  const line = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-renamed]')
+
+  test('the same id at a new folder keeps the running shell on screen and says so in one dismissable line', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} projectId={ID} />)
+    act(() => tell.get(A)?.({ at: 'live' }))
+    expect(line(container)).toBeNull()
+
+    rerender(<Hosted projectPath={RENAMED} projectId={ID} />)
+    /* Nothing unmounted, nothing new mounted: the same shell, opened in A, still on screen. */
+    expect(unmounted).toEqual([])
+    expect(mounted).toEqual([A])
+    expect(onScreen(container)).toEqual({ terminals: [A], shown: [A], hidden: [false] })
+    expect(line(container)?.textContent).toContain(
+      `This folder was renamed to ${RENAMED}. The shell still works in it but shows the old name; open a new shell to start fresh.`,
+    )
+
+    /* New shell is offered while it runs, asked first, and never pressed for the person. */
+    expect(latest()).toMatchObject({ state: 'idle', disabled: null, confirm: true })
+
+    const dismiss = [...line(container)!.querySelectorAll('button')].find((b) => b.textContent === 'Dismiss')!
+    act(() => dismiss.click())
+    expect(line(container)).toBeNull()
+    expect(unmounted).toEqual([])
+  })
+
+  test('New shell after a rename opens the next shell in the new folder', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} projectId={ID} />)
+    rerender(<Hosted projectPath={RENAMED} projectId={ID} />)
+    expect(press('new-shell')).toBe(true)
+    expect(unmounted).toEqual([A])
+    expect(mounted).toEqual([A, RENAMED])
+    expect(onScreen(container).shown).toEqual([RENAMED])
+    expect(line(container)).toBeNull()
+    expect(latest()).toMatchObject({ disabled: 'The shell here is still running.', confirm: false })
+  })
+
+  test('a different id is a project switch: a separate shell, and no line', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} projectId={ID} />)
+    rerender(<Hosted projectPath={B} projectId={OTHER} />)
+    expect(onScreen(container)).toEqual({ terminals: [A, B], shown: [B], hidden: [true, false] })
+    expect(line(container)).toBeNull()
+    rerender(<Hosted projectPath={A} projectId={ID} />)
+    expect(onScreen(container).shown).toEqual([A])
+    expect(unmounted).toEqual([])
+  })
+})

@@ -257,9 +257,14 @@ export interface Upgradable {
  * would not start. The path is the thing that was wrong and nothing would have
  * said so.
  *
- * So the answer is checked before it is used, and the fallback is the home
- * directory — which is where every shell opened before any of this, so falling
- * back is the old behaviour rather than a new failure.
+ * So the answer is checked before it is used. No folder asked for is the home
+ * directory — which is where every shell opened before any of this. A folder
+ * asked for that is not there is REFUSED, with a sentence that names it: it
+ * used to fall back to the home directory silently, and a project renamed or
+ * moved while the page still held its old path then opened a shell in `~`
+ * that looked like the project's — the next command ran in the wrong place
+ * and nothing had said so. The page writes the sentence into the terminal and
+ * shows the shell as ended, with New shell.
  *
  * It is deliberately NOT confined to a root. The fence around this socket is
  * the ticket and the origin check in `fenced`, and past those the caller is
@@ -267,13 +272,17 @@ export interface Upgradable {
  * anywhere the shell can go. A confinement here would suggest a boundary the
  * shell itself does not have.
  */
-export function openable(asked: string | null, fallback = homedir()): string {
-  if (!asked) return fallback
+export function openable(
+  asked: string | null,
+  fallback = homedir(),
+): { ok: true; cwd: string } | { ok: false; why: string } {
+  if (!asked) return { ok: true, cwd: fallback }
   try {
-    return statSync(asked).isDirectory() ? asked : fallback
+    if (statSync(asked).isDirectory()) return { ok: true, cwd: asked }
+    return { ok: false, why: `${asked} is not a folder, so no shell was opened there.` }
   } catch {
     /* Gone, unreadable, or never there. All the same answer. */
-    return fallback
+    return { ok: false, why: `The folder ${asked} is not there any more (renamed, moved or deleted), so no shell was opened.` }
   }
 }
 
@@ -441,7 +450,17 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
         try {
           const nodePty = await import('node-pty')
           const { file, args } = command()
-          const where = openable(said.cwd)
+          const place = openable(said.cwd)
+          if (!place.ok) {
+            /* Said in the terminal itself, where the person is looking, and as the close reason,
+               which the page shows on the Run item. */
+            trace.wouldNotStart(held, place.why)
+            log(`terminal: ${place.why}`)
+            if (ws.readyState === ws.OPEN) ws.send(`\r\n\x1b[31m${place.why}\x1b[0m\r\n`)
+            shut(4404, place.why)
+            return
+          }
+          const where = place.cwd
           pty = nodePty.spawn(file, args, {
             name: TERM,
             cols: said.cols,
