@@ -58,21 +58,23 @@
 # rather than left to a default. Do not put this behind a tunnel or a reverse
 # proxy. A shell is not a thing to expose because it was convenient once.
 #
-# ## There is no build here, and no `dist`
+# ## The built page, when it is this checkout's, and Vite otherwise
 #
-# There was going to be. The argument for one is that starting should be
-# starting: a start that shells out to a build is a start that fails when the
-# network is down. The argument is fine and the shape is still wrong, because
-# this program is not deployed — it runs on the machine of the person editing
-# it. What `dist` actually buys is a STALE page served with a 200, every symptom
-# of a working app and none of the changes, and that failure has cost this
-# codebase whole afternoons three separate times in three different programs. A
-# missing build announces itself. A stale one does not.
+# There is a build now: `bun run build` compiles the page into `dist/` and
+# stamps it with the commit (`dist/.kehikot-built`), and `serve.ts` serves it —
+# the same doors, the same socket, a twentieth of the memory and none of the
+# transforms on every load. A host builds an installed copy when it installs or
+# updates it, at the tag; a start never builds, because a start that builds is
+# a start that fails when the network is down.
 #
-# There is also no `build` script in `package.json`, deliberately. Six modules
-# in this workspace carry a `"build": "vite build"` that cannot succeed because
-# the page is generated per request and there is no `index.html`. A script that
-# always fails invites somebody to "fix" it by undoing the paragraph above.
+# The old objection to a `dist` was the right one: a STALE page served with a
+# 200 has every symptom of a working app and none of the changes, and that has
+# cost this codebase whole afternoons. So the built page is served only when its
+# stamp is the commit checked out here, which is checked below before anything
+# is started. A checkout somebody edits has no stamp, or one of an older commit,
+# and gets Vite as it always did; a build of an edited tree is never stamped.
+# `serve.ts` refuses a stale build itself too (a 503 that says why), so even
+# `bun run start` by hand cannot serve one.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -131,5 +133,19 @@ for helper in node_modules/node-pty/prebuilds/*/spawn-helper node_modules/node-p
     chmod +x "$helper" && echo "terminal: made $helper executable (bun install does not keep the bit)"
   fi
 done
+
+# The built page, when its stamp is this checkout's HEAD. Read here, in the
+# shell, so choosing costs a `git rev-parse` and not a process. A build this
+# checkout cannot vouch for falls through to Vite.
+BUILT=
+if [ -f dist/.kehikot-built ] && [ -f dist/index.html ]; then
+  read -r BUILT < dist/.kehikot-built || true
+fi
+if [ -n "$BUILT" ] && [ "$BUILT" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+  exec bun run serve.ts
+fi
+if [ -n "$BUILT" ]; then
+  echo "terminal: dist/ is a build of ${BUILT:0:7}, not of this checkout, so Vite serves the page. \`bun run build\` would make it current." >&2
+fi
 
 exec bun run vite $VITE_FORCE

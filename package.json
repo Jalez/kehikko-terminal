@@ -1,12 +1,13 @@
 {
   "name": "kehikko-terminal",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "postinstall": "./dev/fix-spawn-helper.sh",
     "dev": "vite",
-    "start": "vite",
+    "build": "bun run build.ts",
+    "start": "bun run serve.ts",
     "register": "bun run register.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
@@ -21,7 +22,7 @@
     "node-pty": "^1.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#v2.2.0",
+    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#v2.17.0",
     "tailwind-merge": "^3.6.0",
     "ws": "^8.21.3",
     "zod": "^3.23.8"
