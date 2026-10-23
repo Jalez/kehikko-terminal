@@ -16,5 +16,5 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "test", "manifest.ts", "doors.ts", "shell.ts", "page.ts", "register.ts", "vite.config.ts"]
+  "include": ["src", "test", "manifest.ts", "doors.ts", "shell.ts", "pty.ts", "serve.ts", "build.ts", "trace.ts", "page.ts", "register.ts", "vite.config.ts"]
 }

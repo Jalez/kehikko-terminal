@@ -3,8 +3,10 @@ import type { IncomingMessage } from 'node:http'
 import { homedir, userInfo } from 'node:os'
 import type { Duplex } from 'node:stream'
 
+import type { RunSockets } from 'kehikot-module-protocol/run'
 import { mintTicket, sameTicket } from 'kehikot-module-protocol/serve'
 
+import { spawnPty, type Pty } from './pty.ts'
 import * as trace from './trace.ts'
 
 /**
@@ -286,6 +288,107 @@ export function openable(
   }
 }
 
+/**
+ * One terminal connection as `session` needs it, whichever server holds the socket: `ws` on Vite's
+ * HTTP server in development, Bun's own WebSocket on the built server (`terminalSockets`).
+ */
+export interface Connection {
+  /** `connecting`, `open`, `closing` or `closed`, read when the trace is rendered. */
+  state: () => string
+  open: () => boolean
+  /** Bytes queued on the socket and not yet sent. */
+  buffered: () => number
+  send: (text: string) => void
+  close: (code: number, reason: string) => void
+  terminate: () => void
+}
+
+/** What a server tells a session: a frame heard, the socket gone, or the server stopping. */
+export interface Session {
+  heard: (text: string) => void
+  ended: (why: string) => void
+  stop: () => void
+}
+
+/** Said once the socket is listening, by either server. */
+function listening(port: number, listeners: () => number, log: (line: string) => void): void {
+  /*
+   * How many `upgrade` listeners this server carries, read at report time.
+   *
+   * One. If it is ever two, something has attached a second terminal to the
+   * same HTTP server — an HMR reload of this plugin would do it — and the
+   * symptom of that is two handlers racing to answer one handshake, which
+   * degrades exactly the way "it gets worse after a while" describes. It is
+   * a single number on the report and it costs nothing until asked.
+   */
+  trace.attached()
+  trace.watchListeners(listeners)
+  trace.beat()
+  trace.note('server', `the terminal socket is listening on ${port}`)
+  log(`terminal: ready on ws://127.0.0.1:${port}/terminal`)
+}
+
+/**
+ * The terminal socket on the BUILT server (`serve.ts`), as the protocol's `run` takes it.
+ *
+ * The same session as the dev server's, on Bun's own WebSocket. The fence is
+ * `run`'s `socketFence`, which is `fenced` above in the protocol's words: an
+ * `Origin` and a `Host` naming this server's own loopback address, and a bare
+ * 403 otherwise, the reason logged and not sent. The ticket is still the first
+ * frame's, read by `session`.
+ */
+export function terminalSockets(log: (line: string) => void): {
+  sockets: RunSockets<{ held: Session | null }>
+  listening: (port: number) => void
+  stopAll: () => void
+} {
+  const live = new Set<Session>()
+  return {
+    sockets: {
+      paths: ['/terminal'],
+      data: () => ({ held: null }),
+      open: (ws) => {
+        trace.accepted()
+        const held = session(
+          {
+            state: () => ['connecting', 'open', 'closing', 'closed'][ws.readyState] ?? String(ws.readyState),
+            open: () => ws.readyState === 1,
+            buffered: () => ws.getBufferedAmount(),
+            send: (text) => {
+              ws.send(text)
+            },
+            close: (code, reason) => ws.close(code, reason),
+            terminate: () => ws.terminate(),
+          },
+          log,
+        )
+        ws.data.held = held
+        live.add(held)
+      },
+      message: (ws, message) => ws.data.held?.heard(typeof message === 'string' ? message : new TextDecoder().decode(message)),
+      close: (ws, code, reason) => {
+        const held = ws.data.held
+        if (!held) return
+        live.delete(held)
+        held.ended(reason ? reason : `code ${code}`)
+      },
+      refused: (why) => {
+        trace.refused(why)
+        log(`terminal: refused an upgrade — ${why}`)
+      },
+      /* A keystroke frame is a few bytes and a paste a few KiB; past this a frame is not a terminal's. */
+      maxPayloadLength: 1024 * 1024,
+    },
+    /* One `upgrade` handler by construction: `run` holds the socket, and nothing can attach a second. */
+    listening: (port) => listening(port, () => 1, log),
+    /* Every shell this process started ends with it. */
+    stopAll: () => {
+      for (const held of live) held.stop()
+      live.clear()
+    },
+  }
+}
+
 export function serveTerminals(server: Upgradable, port: number, log: (line: string) => void): void {
   void (async () => {
     const { WebSocketServer } = await import('ws')
@@ -314,25 +417,24 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
 
       trace.accepted()
       sockets.handleUpgrade(request, socket, head, (ws) => {
-        void hold(ws, log)
+        const held = session(
+          {
+            state: () => ['connecting', 'open', 'closing', 'closed'][ws.readyState] ?? String(ws.readyState),
+            open: () => ws.readyState === ws.OPEN,
+            buffered: () => ws.bufferedAmount,
+            send: (text) => ws.send(text),
+            close: (code, reason) => ws.close(code, reason),
+            terminate: () => ws.terminate(),
+          },
+          log,
+        )
+        ws.on('message', (data: unknown) => held.heard(typeof data === 'string' ? data : String(data)))
+        ws.on('close', (code: number, reason: Buffer) => held.ended(reason.length > 0 ? reason.toString('utf8') : `code ${code}`))
+        ws.on('error', (error: Error) => held.ended(error.message))
       })
     })
 
-    /*
-     * How many `upgrade` listeners this server carries, read at report time.
-     *
-     * One. If it is ever two, something has attached a second terminal to the
-     * same HTTP server — an HMR reload of this plugin would do it — and the
-     * symptom of that is two handlers racing to answer one handshake, which
-     * degrades exactly the way "it gets worse after a while" describes. It is
-     * a single number on the report and it costs nothing until asked.
-     */
-    trace.attached()
-    trace.watchListeners(() => server.listenerCount?.('upgrade') ?? 0)
-    trace.beat()
-    trace.note('server', `the terminal socket is listening on ${port}`)
-
-    log(`terminal: ready on ws://127.0.0.1:${port}/terminal`)
+    listening(port, () => server.listenerCount?.('upgrade') ?? 0, log)
   })().catch((error: unknown) => {
     log(`terminal: could not start — ${error instanceof Error ? error.message : String(error)}`)
   })
@@ -348,8 +450,8 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
  * spawned until the first frame proves itself. A connection that never speaks
  * is closed.
  */
-async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Promise<void> {
-  let pty: import('node-pty').IPty | null = null
+export function session(ws: Connection, log: (line: string) => void): Session {
+  let pty: Pty | null = null
 
   /*
    * The record of this one connection, opened HERE rather than at spawn.
@@ -362,11 +464,7 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
    * a `bufferedAmount` that only rises between samples is the transport failure
    * this workspace keeps meeting, and it is worth seeing exactly.
    */
-  const held = trace.connected(
-    () =>
-      ['connecting', 'open', 'closing', 'closed'][ws.readyState] ?? String(ws.readyState),
-    () => ws.bufferedAmount,
-  )
+  const held = trace.connected(ws.state, ws.buffered)
 
   /* Closing must not be able to throw. Every call goes through here, because
      this is a `ws` handler and an exception in one reaches the top of the
@@ -448,7 +546,6 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
       admitted = true
       void (async () => {
         try {
-          const nodePty = await import('node-pty')
           const { file, args } = command()
           const place = openable(said.cwd)
           if (!place.ok) {
@@ -456,20 +553,21 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
                which the page shows on the Run item. */
             trace.wouldNotStart(held, place.why)
             log(`terminal: ${place.why}`)
-            if (ws.readyState === ws.OPEN) ws.send(`\r\n\x1b[31m${place.why}\x1b[0m\r\n`)
+            if (ws.open()) ws.send(`\r\n\x1b[31m${place.why}\x1b[0m\r\n`)
             shut(4404, place.why)
             return
           }
           const where = place.cwd
-          pty = nodePty.spawn(file, args, {
+          const started = await spawnPty(file, args, {
             name: TERM,
             cols: said.cols,
             rows: said.rows,
             cwd: where,
             env: { ...process.env, TERM },
           })
-          trace.spawned(held, pty.pid, where, said.cols, said.rows)
-          pty.onData((chunk: string) => {
+          pty = started
+          trace.spawned(held, started.pid, where, said.cols, said.rows)
+          started.onData((chunk: string) => {
             /*
              * The hot path, and the whole cost of the tracer on it is two
              * increments, a `Date.now()` and a `bufferedAmount` read. No string
@@ -481,18 +579,18 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
              * that was NOT handed to the socket is output the person will never
              * see, and until now it left no trace anywhere.
              */
-            const alive = ws.readyState === ws.OPEN
+            const alive = ws.open()
             if (alive) ws.send(chunk)
-            trace.fromPty(held, chunk.length, ws.bufferedAmount, alive, chunk)
+            trace.fromPty(held, chunk.length, ws.buffered(), alive, chunk)
           })
-          pty.onExit(({ exitCode }: { exitCode: number }) => {
+          started.onExit(({ exitCode }: { exitCode: number }) => {
             trace.exited(held, exitCode)
-            if (ws.readyState === ws.OPEN) shut(4000, `the shell exited (${exitCode})`)
+            if (ws.open()) shut(4000, `the shell exited (${exitCode})`)
           })
           log(`terminal: a shell in ${where}`)
           /* The socket ended while the shell was starting: nobody is left to
              end the shell, so it is ended here. */
-          if (ws.readyState !== ws.OPEN) return stop()
+          if (!ws.open()) return stop()
           for (const waiting of early.splice(0)) heard(waiting)
         } catch (error: unknown) {
           const why = error instanceof Error ? error.message : String(error)
@@ -557,14 +655,15 @@ async function hold(ws: import('ws').WebSocket, log: (line: string) => void): Pr
     }
   }
 
-  ws.on('message', (data: unknown) => heard(typeof data === 'string' ? data : String(data)))
-
-  ws.on('close', (code: number, reason: Buffer) => {
-    trace.closed(held, reason.length > 0 ? reason.toString('utf8') : `code ${code}`)
-    stop()
-  })
-  ws.on('error', (error: Error) => {
-    trace.closed(held, error.message)
-    stop()
-  })
+  return {
+    heard,
+    ended: (why: string) => {
+      trace.closed(held, why)
+      stop()
+    },
+    stop: () => {
+      if (ws.open()) shut(1001, 'the terminal is stopping')
+      stop()
+    },
+  }
 }

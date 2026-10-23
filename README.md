@@ -114,7 +114,7 @@ The one that matters, and the one that is actually stoppable:
 | No CORS headers, anywhere | A cross-origin `fetch` may be sent but its response may not be read, so the ticket cannot be lifted out of the page. |
 | A ticket in the page | Minted per process, printed into `/app`, required as the first frame of the socket and in `x-module-ticket` on the one HTTP write. Compared in constant time. Nothing is spawned before it is checked. |
 | `frame-ancestors` | Only this origin and the host may frame the page, so a live terminal cannot be embedded in a stranger's document. |
-| Bound to 127.0.0.1 | Set explicitly in `vite.config.ts`, not left to a default. |
+| Bound to 127.0.0.1 | Set explicitly in `vite.config.ts`, and by the protocol's `run` for the built server, not left to a default. |
 
 All six are measured, not asserted.
 
@@ -434,6 +434,59 @@ PASS  the counts came back down when the socket closed
 curl -sI -H 'Origin: https://evil.example' /app | grep -i access-control
   (prints nothing)
 ```
+
+## Served ready-built
+
+An installed copy is served from a page built ahead of time, by one Bun process
+(`serve.ts`, the protocol's `run`), whenever `dist/` carries a stamp of the commit
+checked out. Otherwise, as in a checkout somebody edits, `run.sh` runs Vite as before.
+`bun run build` makes the build and the stamp. A host runs it when it installs or
+updates the module, so a start never builds.
+
+Both servers share the doors (`answer` in `doors.ts`, mounted by `doors()` on Vite
+and by `run` on Bun) and the session (`session` in `shell.ts`, on `ws` there and on
+Bun's WebSocket here). Under Bun the fence is the protocol's `socketFence`, which is
+`fenced` in its words: `Origin` and `Host` must name this server's loopback address,
+otherwise a bare 403. The ticket is still the first frame.
+
+**The pty is Bun's own under Bun.** node-pty does not work under Bun (1.4.0,
+node-pty 1.1.0, macOS arm64):
+- `spawn` returns a pid, and then no output ever arrives;
+- `resize` throws `ioctl(2) failed, EBADF`;
+- the process can no longer exit on its own.
+
+`Bun.spawn(argv, { terminal })` does everything this module needs. `pty.ts` puts both
+behind four verbs, and picks by runtime. Measured on the built server with 16
+sessions at once, from a raw client:
+
+```
+PASS  a handshake from another origin is refused                (403)
+PASS  a wrong ticket spawns nothing                             (code 4403)
+PASS  16 shells up and prompting                                (157–331 ms for all)
+PASS  Unicode both ways, split across reads, no U+FFFD          (6000 three-byte characters per shell)
+PASS  a resize reaches the program                              (stty size -> 43 132)
+PASS  long output arrives whole                                 (seq 1 300000, 2.3 MB in 0.23 s)
+PASS  Ctrl-C interrupts the foreground job
+PASS  exit closes the socket with the shell's code              (4000, "the shell exited (7)")
+PASS  closing the page ends every shell                         (0 left)
+PASS  a new shell after that opens
+PASS  SIGTERM to the server ends its shells                     (1001 "the terminal is stopping")
+```
+
+In a browser (headless Chromium), standalone and framed from another origin: a
+prompt was drawn, typing reached the shell and it answered, and nothing was logged.
+The same raw-client run against the dev server (Vite, node-pty, the same `session`)
+passes too.
+
+Start, load and memory, Vite (1.1.1) against the built server, each started fresh in
+a scratch environment:
+
+| | Vite dev | built (`serve.ts`) |
+|---|---|---|
+| spawn → first 200 | 178–187 ms (1.7 s first after install) | **65–73 ms** |
+| page `load` | 206–235 ms, 36 requests | **35–40 ms, 4 requests** |
+| framed by a scratch host, page opened → prompt drawn | 0.97–1.04 s | **0.73–0.76 s** |
+| resident memory, server after the page loaded | 180–226 MB (node + esbuild) | **51–53 MB** (bun) |
 
 ## Not verified
 
