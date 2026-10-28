@@ -69,11 +69,11 @@ export const PREFERRED_PORT = 7920
  * person's commands in whichever project they happened to look at last. That
  * was reported, in those words, and it is why the scope changed.
  *
- * `scope: 'epic'` is the protocol's word for "follows the reader": told which
- * subject is open, told again on every switch, re-pointed. This module now is
- * that, and a host that only re-points epic-scoped modes — which is what the
- * wire says a conforming host does — has to be told so, or it would be exactly
- * the module the report describes. What it does with the two halves of the
+ * `scope: 'project'` (protocol 2.29.0) is what its content belongs to: shells
+ * in the project's folder, whatever epic is open. A host tells every container
+ * the context on every switch, so the module follows the project the canvas
+ * names. Until 2.29.0 the only words were `epic` and `global`, and it said
+ * `epic` to be told; neither said the truth. What it does with the two halves of the
  * subject differs, and is written down in `src/view/sessions.ts`: the PROJECT
  * keys a shell, and a switch shows that project's session without touching
  * any other; the EPIC is deliberately not a key, because an epic is a unit of
@@ -150,7 +150,10 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     'machine as them, with no sandbox between: prefer the reversible order, and ask before the step ' +
     'that cannot be taken back.',
   entry: '/app',
-  modes: [{ id: 'terminal', label: 'Terminal', scope: 'epic' }],
+  /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
+  modes: [
+    { id: 'terminal', label: 'Terminal', scope: 'project', scopeSays: 'shells in this project’s folder, whatever epic is open' },
+  ],
   extensions: { emits: [], consumes: [] },
   /* Why this module has nothing to narrow by the parts of an epic. */
   partless: 'A shell: nothing in it belongs to an epic.',
