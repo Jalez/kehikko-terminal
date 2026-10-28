@@ -4,7 +4,7 @@ import { homedir, userInfo } from 'node:os'
 import type { Duplex } from 'node:stream'
 
 import type { RunSockets } from 'kehikot-module-protocol/run'
-import { mintTicket, sameTicket } from 'kehikot-module-protocol/serve'
+import { mintTicket, personEnv, sameTicket } from 'kehikot-module-protocol/serve'
 
 import { spawnPty, type Pty } from './pty.ts'
 import * as trace from './trace.ts'
@@ -64,6 +64,15 @@ const MUST_SPEAK_WITHIN = 5_000
 
 /** What the shell is told it is, so programs inside it behave. */
 const TERM = 'xterm-256color'
+
+/**
+ * A shell's environment: the person's (`personEnv`, without the host's own `bun` this module was
+ * started with first on its PATH and `BUN_BE_BUN`), with `TERM`. A shell given the host's `bun`
+ * without `BUN_BE_BUN` boots the host on every `bun` typed in it.
+ */
+export function shellEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  return { ...personEnv(env), TERM }
+}
 
 export interface Fenced {
   ok: boolean
@@ -563,7 +572,7 @@ export function session(ws: Connection, log: (line: string) => void): Session {
             cols: said.cols,
             rows: said.rows,
             cwd: where,
-            env: { ...process.env, TERM },
+            env: shellEnv(),
           })
           pty = started
           trace.spawned(held, started.pid, where, said.cols, said.rows)

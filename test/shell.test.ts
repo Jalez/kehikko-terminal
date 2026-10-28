@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { command, fenced, openable, opening, sayable } from '../shell.ts'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
+
+import { command, fenced, openable, opening, sayable, shellEnv } from '../shell.ts'
 
 /**
  * The fence, tested without a socket.
@@ -151,5 +156,35 @@ describe('where a shell opens', () => {
 
   test('an empty string is treated as nothing asked for', () => {
     expect(openable('', '/tmp')).toEqual({ ok: true, cwd: '/tmp' })
+  })
+})
+
+describe('the shell’s environment', () => {
+  test('is the person’s: their bun, not the one the host put first on this module’s PATH', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'terminal-person-env-'))
+    try {
+      const hostShim = join(scratch, 'kehikot-bun-1')
+      const bunNode = join(scratch, 'bun-node-502-x')
+      for (const dir of [hostShim, bunNode]) {
+        mkdirSync(dir)
+        symlinkSync(process.execPath, join(dir, 'bun'))
+      }
+      symlinkSync(process.execPath, join(bunNode, 'node'))
+      const person = join(scratch, 'person')
+      mkdirSync(person)
+      writeFileSync(join(person, 'bun'), '#!/bin/sh\necho person-bun\n')
+      chmodSync(join(person, 'bun'), 0o755)
+      const env = shellEnv({
+        PATH: [bunNode, hostShim, person, '/usr/bin', '/bin'].join(delimiter),
+        KEHIKOT_HOST_PATH: hostShim,
+        BUN_BE_BUN: '1',
+        HOME: '/home/me',
+      })
+      expect(env).toEqual({ PATH: [person, '/usr/bin', '/bin'].join(delimiter), HOME: '/home/me', TERM: 'xterm-256color' })
+      const ran = spawnSync('/bin/sh', ['-c', 'command -v bun; bun --version'], { env, encoding: 'utf8' })
+      expect(ran.stdout).toBe(`${join(person, 'bun')}\nperson-bun\n`)
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
   })
 })
