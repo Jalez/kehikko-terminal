@@ -1,8 +1,8 @@
-import { establishBuild, refuseTicket, type Reply } from 'kehikot-module-protocol/serve'
+import { establishBuild, events, refuseTicket, type Reply, type Stream } from 'kehikot-module-protocol/serve'
 
 import { MANIFEST } from './manifest.ts'
 import { TICKET } from './shell.ts'
-import { fromPage, readStanding, report, standing } from './trace.ts'
+import { fromPage, pageFollowed, pageLeft, readStanding, report, standing } from './trace.ts'
 
 /**
  * The HTTP doors, which are four, because almost everything this module does
@@ -147,4 +147,35 @@ export function answer(
   }
 
   return null
+}
+
+/** The page's held stream: its being open is the page being here. */
+export const PAGE_EVENTS_PATH = '/api/trace/page/events'
+
+const held = events((path) => (path === PAGE_EVENTS_PATH ? { topic: 'page', initial: { here: true } } : null))
+
+/**
+ * The page's half of "still here", as one held connection instead of a beacon on a clock
+ * (protocol 2.32.0, `events`/`subscribe`). It opens with one event and then carries nothing but the
+ * doors' heartbeat comment; what matters is that it is OPEN. Its open and close go in the trace's
+ * ring (`pageFollowed`, `pageLeft`), so the report says when the page arrived and when it left, was
+ * hidden, or lost this server — and the page's `subscribe` notices the close from its side and asks
+ * the health check, which is how its cover learns the server went.
+ *
+ * Ticketed like the beacon, in the query because an `EventSource` sends no header: every open and
+ * close writes a line into the ring, and only this module's own page may do that.
+ */
+export const stream: Stream = (method, path, query, emit, ticket) => {
+  if (path !== PAGE_EVENTS_PATH) return null
+  const refused = refuseTicket(ticket ?? query.get('ticket'), TICKET, NO_TICKET)
+  if (refused) return { reply: refused }
+  const live = held(method, path, query, emit, ticket)
+  if (!live || !('close' in live)) return live
+  pageFollowed()
+  return {
+    close: () => {
+      live.close()
+      pageLeft()
+    },
+  }
 }

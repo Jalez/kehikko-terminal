@@ -36,23 +36,28 @@
  *      heartbeat below going quiet: `ticks` stops rising between two reads of
  *      the report, or `worst lag` is enormous.
  *   4. **The page's render loop.** rAF stopped, or xterm's `RenderDebouncer`
- *      stalled behind it. Shows as page beacons still arriving — so the page's
- *      JavaScript is alive — carrying `frame outstanding for 22.0s`. This is
- *      the exact fingerprint of the WKWebView bug, so if it comes back it is
+ *      stalled behind it. The page's own timer still runs, so it notes
+ *      `an animation frame has been outstanding for 5.0s` and posts it, and
+ *      its standings carry `frame outstanding for 22.0s`. This is the exact
+ *      fingerprint of the WKWebView bug, so if it comes back it is
  *      identifiable rather than re-discoverable.
- *   5. **The page entirely.** Main thread wedged, frame torn out, document
- *      gone. Shows as the beacons THEMSELVES stopping: `last beacon 40s ago`.
+ *   5. **The page entirely.** Frame torn out or document gone: the page's held
+ *      stream (`/api/trace/page/events`) closes, and the ring says so. Main
+ *      thread wedged: the stream stays open (the browser holds it, not the
+ *      page's JavaScript) while the standings stop: `last said something 40s
+ *      ago` with a stream held and a shell open.
  *
- * Note that 4 and 5 are only separable because the page reports periodically.
- * A page that only spoke when something happened would look identical, frozen
- * and idle, and that ambiguity is what has made this un-diagnosable so far.
+ * Telling 5 from an idle page is the one thing no event can carry, because a
+ * wedged main thread runs nothing. So a page that is shown and holds a live
+ * terminal socket still says its standing every 15 s when it has nothing else
+ * to say; everything else it says when it happens (`src/view/trace.ts`).
  *
  * ## The report is on the server, on purpose
  *
  * A frozen page cannot draw its own diagnostics. Anything rendered inside the
  * module is a thing you can only read when you do not need it. So the page
- * ships a small standing to `/api/trace/page` every couple of seconds, the
- * server keeps it, and everything a person needs comes out of `curl` — from
+ * ships a small standing to `/api/trace/page` whenever it has noted something
+ * (and every 15 s while a shell is open in a shown page), the server keeps it, and everything a person needs comes out of `curl` — from
  * another window, while the terminal in front of them is stuck.
  *
  * The corollary is that the page's own recent events have to be shipped BEFORE
@@ -207,6 +212,10 @@ const counted = {
   page: null as PageStanding | null,
   pageAt: 0,
   pageBeacons: 0,
+  /* The page's held stream (`/api/trace/page/events`): how many are open, and when one last opened
+     or closed. Its close is the page leaving, being hidden, or losing this server. */
+  pageStreams: 0,
+  pageStreamAt: 0,
   attached: 0,
 }
 
@@ -227,6 +236,20 @@ const shells: Shell[] = []
 export function note(from: Event['from'], what: string): void {
   ring.push({ at: Date.now(), from, what })
   if (ring.length > KEPT) ring.shift()
+}
+
+/** The page opened its held stream: it is here, and stays here until that closes. */
+export function pageFollowed(): void {
+  counted.pageStreams += 1
+  counted.pageStreamAt = Date.now()
+  note('page', `the page's stream opened (${counted.pageStreams} held)`)
+}
+
+/** A page's held stream closed: the page left, was hidden, or lost this server. */
+export function pageLeft(): void {
+  if (counted.pageStreams > 0) counted.pageStreams -= 1
+  counted.pageStreamAt = Date.now()
+  note('page', `the page's stream closed — it left, was hidden, or lost this server (${counted.pageStreams} held)`)
 }
 
 export function refused(why: string): void {
@@ -428,6 +451,8 @@ export interface Standing {
   page: PageStanding | null
   pageAt: number
   pageBeacons: number
+  pageStreams: number
+  pageStreamAt: number
   recordingBytes: boolean
   rss: number
   /**
@@ -482,6 +507,8 @@ export function standing(): Standing {
     page: counted.page,
     pageAt: counted.pageAt,
     pageBeacons: counted.pageBeacons,
+    pageStreams: counted.pageStreams,
+    pageStreamAt: counted.pageStreamAt,
     recordingBytes,
     rss: process.memoryUsage?.().rss ?? 0,
     attached: counted.attached,
@@ -562,6 +589,15 @@ export function report(now: number = Date.now(), s: Standing = standing()): stri
       s.pageBeacons === 0
         ? 'has never reported. Either no container is open, or it froze before it could.'
         : `last said something ${ago(s.pageAt, now)} (${s.pageBeacons} times)`
+    }`,
+  )
+  say(
+    `             ${
+      s.pageStreams > 0
+        ? `holding ${s.pageStreams} stream${s.pageStreams === 1 ? '' : 's'} open, since ${ago(s.pageStreamAt, now)}: the page is here (or its main thread is held; see when it last said something)`
+        : s.pageStreamAt === 0
+          ? 'has never held a stream open.'
+          : `holds no stream open; the last closed ${ago(s.pageStreamAt, now)}: the page left, was hidden, or lost this server`
     }`,
   )
   if (p) {

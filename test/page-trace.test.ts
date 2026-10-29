@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { readStanding } from '../trace.ts'
-import { note, seen, standingNow, watchThisPage } from '../src/view/trace.ts'
+import { STANDING, dueToSpeak, note, seen, standingNow, watchThisPage } from '../src/view/trace.ts'
 
 /**
  * The page's half, tested where it can be tested.
@@ -116,9 +116,23 @@ describe('the page’s own ring is bounded', () => {
 })
 
 describe('the beacon', () => {
-  test('is sent on a timer, carries the ticket, and is a standing the server accepts', async () => {
+  test('presence is one held stream; notes go when there are notes and carry the ticket; nothing goes on a clock while no shell is open', async () => {
     const sent: { url: string; body: unknown; headers: Record<string, string>; keepalive: boolean }[] = []
     const was = globalThis.fetch
+    const wasSource = (globalThis as { EventSource?: unknown }).EventSource
+    const opened: string[] = []
+    /* The page's EventSource, kept: the stream is opened once, with the ticket in its query. */
+    ;(globalThis as { EventSource?: unknown }).EventSource = class {
+      readyState = 1
+      onmessage: unknown = null
+      onerror: unknown = null
+      onopen: unknown = null
+      constructor(url: string) {
+        opened.push(url)
+      }
+      addEventListener() {}
+      close() {}
+    }
     /* The ticket this process printed into the page, where the protocol's `ask` reads it. */
     const island = document.createElement('script')
     island.id = 'ticket'
@@ -137,15 +151,21 @@ describe('the beacon', () => {
 
     try {
       watchThisPage()
-      /* Slower than any other test here, and deliberately not faked: the value
-         of this one is that a real `setInterval` really fires, because the
-         whole diagnostic rests on the page speaking when nothing has happened.
-         A fake clock would prove the arithmetic and not the heartbeat. */
-      await new Promise((done) => setTimeout(done, 2400))
+      expect(opened).toHaveLength(1)
+      expect(opened[0]).toStartWith('/api/trace/page/events?')
+      expect(new URL(opened[0]!, 'http://x').searchParams.get('ticket')).toBe('a-ticket')
 
-      expect(sent.length).toBeGreaterThan(0)
-      const one = sent[0]
-      expect(one?.url).toBe('/api/trace/page')
+      /* Real timers, deliberately: the value is that a real `setInterval` really
+         decides. What the cases above noted goes first, twenty lines a tick,
+         until the page has said everything; "the page loaded" is among it. */
+      const posts = () => sent.filter((one) => one.url === '/api/trace/page')
+      const carried = (i: number) => (posts()[i]?.body as { standing: { noted: { what: string }[] } }).standing.noted
+      for (let waited = 0; waited < 9000; waited += 200) {
+        if (posts().length && carried(posts().length - 1).length < 20) break
+        await new Promise((done) => setTimeout(done, 200))
+      }
+      expect(posts().length).toBeGreaterThan(0)
+      const one = posts()[0]
       const held = one?.body as { ticket?: unknown; standing?: unknown }
       /* In the header every module uses, not in the body. */
       expect(one?.headers['x-module-ticket']).toBe('a-ticket')
@@ -153,9 +173,35 @@ describe('the beacon', () => {
       /* So one sent as the page is torn down still goes. */
       expect(one?.keepalive).toBe(true)
       expect(readStanding(held.standing)).not.toBeNull()
+      expect(posts().some((_, i) => carried(i).some((line) => line.what === 'the page loaded'))).toBe(true)
+
+      /* Nothing more noted, no shell open: nothing goes out, however long it is left. */
+      const said = posts().length
+      await new Promise((done) => setTimeout(done, 2400))
+      expect(posts()).toHaveLength(said)
+
+      /* Something happened: it goes at the next tick, and only it. */
+      note('something changed')
+      await new Promise((done) => setTimeout(done, 1200))
+      expect(posts()).toHaveLength(said + 1)
+      expect(carried(said).map((line) => line.what)).toEqual(['something changed'])
     } finally {
       island.remove()
       globalThis.fetch = was
+      ;(globalThis as { EventSource?: unknown }).EventSource = wasSource
     }
-  }, 6000)
+  }, 16000)
+})
+
+describe('when the page speaks', () => {
+  test('notes go at once; with none, only a shown page holding a live shell speaks, every STANDING', () => {
+    const quiet = { noted: 0, visible: true, liveSockets: 1, quietFor: 0 }
+    expect(dueToSpeak({ ...quiet, noted: 3 })).toBe(true)
+    expect(dueToSpeak({ ...quiet, noted: 3, visible: false, liveSockets: 0 })).toBe(true)
+    expect(dueToSpeak(quiet)).toBe(false)
+    expect(dueToSpeak({ ...quiet, quietFor: STANDING })).toBe(true)
+    /* Hidden, or no shell open: never on a clock, however long it has been quiet. */
+    expect(dueToSpeak({ ...quiet, quietFor: 3_600_000, visible: false })).toBe(false)
+    expect(dueToSpeak({ ...quiet, quietFor: 3_600_000, liveSockets: 0 })).toBe(false)
+  })
 })

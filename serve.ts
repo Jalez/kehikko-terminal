@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { run } from 'kehikot-module-protocol/run'
 
-import { BUILD, answer } from './doors.ts'
+import { BUILD, answer, stream } from './doors.ts'
 import { ID, MANIFEST, PREFERRED_PORT } from './manifest.ts'
 import { TICKET, terminalSockets } from './shell.ts'
 
@@ -34,6 +34,7 @@ const running = await run({
   dir: import.meta.dirname,
   manifest: MANIFEST,
   answer,
+  stream,
   build: BUILD,
   ticket: TICKET,
   maxBodyBytes: MOST_READ,

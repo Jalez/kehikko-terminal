@@ -188,8 +188,9 @@ the last 37 things that happened, oldest first
 | What the report says | Which layer stopped | Where to go next |
 |---|---|---|
 | `page has never reported` | The container is not open, or its JavaScript died before it could speak once | Is the module framed at all? Look for an error in the host's console |
-| `page last said something 40s ago` | The **page entirely** — main thread wedged, or the frame was torn out | The page, not this module's server. Nothing here will help |
-| `an animation frame has been outstanding for 22.0s` and beacons still arriving | The **window's animation frames**, for this frame. The page runs; xterm's draw waits for a frame that is not coming | If `visibilityState` is `hidden`, that is allowed. If `visible` and frames land about every ten seconds, WebKit is throttling this iframe as "outside the viewport" — the fourth report, below. `drawn without waiting` should be climbing; if it is, the rows are on screen regardless and this line is the window's condition, not a freeze. If it is not, `src/view/frames.ts` is not running |
+| `page last said something 40s ago` while it is `holding 1 stream open` and a shell is open | The **page entirely** — main thread wedged (a shown page with a shell says its standing every 15 s) | The page, not this module's server. Nothing here will help |
+| `page holds no stream open; the last closed …` | The page **left** — the frame was torn out, the window hidden, or it lost this server | The ring says which: a `document became hidden` or `pagehide` line from the page just before it |
+| `an animation frame has been outstanding for 22.0s` and the page still noting things | The **window's animation frames**, for this frame. The page runs; xterm's draw waits for a frame that is not coming | If `visibilityState` is `hidden`, that is allowed. If `visible` and frames land about every ten seconds, WebKit is throttling this iframe as "outside the viewport" — the fourth report, below. `drawn without waiting` should be climbing; if it is, the rows are on screen regardless and this line is the window's condition, not a freeze. If it is not, `src/view/frames.ts` is not running |
 | `writes` climbing while `renders` does not | xterm parsed it and never drew it | If `on screen` says 0%, xterm has paused its own renderer because the browser told it the terminal is off screen. If it says 100%, the write path and the render path are different things and the render path is where to look |
 | `the send buffer is not draining` | The **transport**. Open at this end, dead at the other | The socket. A half-open websocket is this workspace's recurring shape |
 | `pty -> page … last 40.0s ago` while everything above is fresh | The **shell**. It is blocked, or genuinely printing nothing | `ps` the pid the report prints |
@@ -202,8 +203,10 @@ the last 37 things that happened, oldest first
 ### What it costs when nothing is wrong
 
 One `setInterval` at 1Hz in the server and one in the page; one animation frame
-per second (not a rAF loop — see the essay in `src/view/trace.ts`); one ~0.5 KB
-`fetch` to loopback every two seconds while a container is open; one
+per second (not a rAF loop — see the essay in `src/view/trace.ts`); one held
+stream from the page, whose close says the page left; one ~0.5 KB `fetch` to
+loopback when the page has noted something, and otherwise every 15 s only while
+a shell is open in a shown page (hidden, or no shell: none); one
 `IntersectionObserver` that fires only when the frame leaves the screen or comes
 back. On the hot paths — a chunk out of the pty, a keystroke in, a message into
 the page — two integer increments and no allocation. Buffers are bounded at 400

@@ -318,3 +318,23 @@ function plain() {
     noted: [] as { at: number; what: string }[],
   }
 }
+
+describe('the page’s held stream', () => {
+  test('refused without the ticket; open and close are written in the ring and the report says it is held', async () => {
+    const { stream, PAGE_EVENTS_PATH } = await import('../doors.ts')
+    const { report: render } = await import('../trace.ts')
+    expect(stream('GET', PAGE_EVENTS_PATH, new URLSearchParams(), () => {}, null)).toMatchObject({ reply: { status: 403 } })
+    expect(stream('GET', PAGE_EVENTS_PATH, new URLSearchParams({ ticket: 'nope' }), () => {}, null)).toMatchObject({ reply: { status: 403 } })
+    expect(stream('GET', '/api/trace', new URLSearchParams(), () => {}, null)).toBeNull()
+
+    const heard: unknown[] = []
+    const live = stream('GET', PAGE_EVENTS_PATH, new URLSearchParams({ ticket: TICKET }), (event) => void heard.push(event), null)
+    if (!live || !('close' in live)) throw new Error('not a stream')
+    expect(heard).toEqual([{ here: true }])
+    expect(render()).toContain('holding 1 stream open')
+    expect(render()).toContain("the page's stream opened")
+    live.close()
+    expect(render()).toContain('holds no stream open')
+    expect(render()).toContain("the page's stream closed")
+  })
+})

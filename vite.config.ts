@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import { doors, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { BUILD, answer } from './doors.ts'
+import { BUILD, answer, stream } from './doors.ts'
 import { ID, MANIFEST, PREFERRED_PORT } from './manifest.ts'
 import { TICKET, serveTerminals } from './shell.ts'
 
@@ -90,7 +90,7 @@ export default defineConfig({
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
     sockets(),
-    doors({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Terminal', ticket: TICKET }, maxBodyBytes: MOST_READ }),
+    doors({ manifest: MANIFEST, answer, stream, build: BUILD, page: { title: 'Terminal', ticket: TICKET }, maxBodyBytes: MOST_READ }),
     react(),
     tailwindcss(),
   ],
