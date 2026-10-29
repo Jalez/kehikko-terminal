@@ -109,7 +109,7 @@ export function App() {
    * on its own it is a shell in the home directory — so "nothing is framing
    * this page" is not a state it covers.
    *
-   * A page learns its server has gone from the beacon (`view/trace.ts`) and
+   * A page learns its server has gone from its held stream (`view/trace.ts`) and
    * from a socket ending (`view/terminal-view.tsx`). Where it is drawn is
    * `Shells`' to decide, because a shell that has ended still has a screen
    * worth reading.

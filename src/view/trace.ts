@@ -1,5 +1,5 @@
 import { framesDriven, requestRealFrame } from './frames.ts'
-import { ask } from 'kehikot-module-protocol/client'
+import { ask, subscribe, ticket } from 'kehikot-module-protocol/client'
 
 /**
  * The page's half of the trace, which exists because a frozen page cannot draw
@@ -10,13 +10,17 @@ import { ask } from 'kehikot-module-protocol/client'
  * A terminal that has stopped showing output looks identical from the outside
  * whether the page is dead, the page is alive but not painting, the socket is
  * open at one end only, or the shell is simply printing nothing. Everything
- * here is arranged to make those four distinguishable, and it does it by
- * SPEAKING PERIODICALLY rather than only when something happens.
+ * here is arranged to make those four distinguishable.
  *
- * That is the whole trick. A page that reported only on events would go quiet
- * when it froze and go quiet when it was idle, and those two are the states
- * that have to be told apart. A page that says "still here, 0 frames drawn"
- * every two seconds distinguishes them in one line.
+ * It used to do that by SPEAKING PERIODICALLY, every two seconds, whether or
+ * not anything had happened, because a page that reported only on events would
+ * go quiet when it froze and go quiet when it was idle. Most of that is now
+ * said without a clock: the page's presence is a held stream whose close the
+ * server records, a frame that will not land is noted as an event by the page's
+ * own (local) timer, and notes are posted when there are notes. The one case an
+ * event cannot carry, a wedged main thread, which runs nothing, keeps a slow
+ * standing, and only while it could matter. See "The one beacon that is still
+ * on a clock" below.
  *
  * ## Why it is posted to the server rather than kept here
  *
@@ -24,8 +28,8 @@ import { ask } from 'kehikot-module-protocol/client'
  * it has already LEFT the page by the time the freeze happens. A ring buffer
  * that you have to open a devtools console to read is a ring buffer nobody
  * reads, and in the desktop shell there may not be a console to open. So the
- * buffer is shipped, in small pieces, continuously, and `curl` reads it off the
- * server. See the essay in `trace.ts` at the repository root.
+ * buffer is shipped, in small pieces, as soon as it has something in it, and
+ * `curl` reads it off the server. See the essay in `trace.ts` at the repository root.
  *
  * ## The frame probe, and why it is not a rAF loop
  *
@@ -44,14 +48,42 @@ import { ask } from 'kehikot-module-protocol/client'
  *
  * ## What it costs when nothing is wrong
  *
- * One `setInterval` at 1Hz, one animation frame per second, and one `fetch` to
- * 127.0.0.1 every two seconds carrying about half a kilobyte. On the hot paths
- * — a message off the socket, a keystroke — it is two integer increments and no
- * allocation. Nothing here formats a string unless something changed.
+ * One `setInterval` at 1Hz and one animation frame per second, both local: no
+ * request. The page's PRESENCE is one held stream (`/api/trace/page/events`):
+ * open is the page being here, its close is the page leaving, being hidden or
+ * losing its server, and the server writes both into its ring. What the page
+ * noted is posted when it has noted something, never on a clock. On the hot
+ * paths — a message off the socket, a keystroke — it is two integer increments
+ * and no allocation. Nothing here formats a string unless something changed.
+ *
+ * ## The one beacon that is still on a clock, and why
+ *
+ * Layers 4 and 5 of the essay in `trace.ts` — the render loop stopped while
+ * JavaScript runs, and the main thread wedged — have to be told apart from a
+ * page that is merely idle. Layer 4 is now said as an event: the 1Hz timer
+ * notes a frame that has been outstanding for {@link FRAME_OVERDUE} ms, and
+ * that note is posted like any other. Layer 5 cannot be: a wedged main thread
+ * runs nothing, and a held stream stays open from the browser's network side
+ * while the page's JavaScript is stuck, so the stream cannot say it either.
+ * Only the page speaking on a clock, and then going quiet, says it. So a
+ * standing still goes every {@link STANDING} ms — but only while the page is
+ * shown AND holds a live terminal socket, the only time a freeze is something
+ * a person is waiting on. Hidden, or with no shell open, nothing goes out on a
+ * clock at all.
  */
 
-/** How often the page says it is still here. */
-const BEACON = 2000
+/**
+ * How often a shown page holding a live terminal socket says its standing when
+ * it has noted nothing: the one clock left, for a wedged main thread. See above.
+ */
+export const STANDING = 15_000
+
+/** A frame outstanding this long is noted: the render loop has stopped while this page's JavaScript runs. */
+export const FRAME_OVERDUE = 5000
+
+/** After a post that did not land, how long before the next try, doubling to {@link RETRY_MOST}. */
+const RETRY_FIRST = 2000
+const RETRY_MOST = 30_000
 
 /** How many events one beacon may carry. */
 const CARRIED = 20
@@ -83,6 +115,8 @@ const counts = {
 
 let lastFrameAt: number | null = null
 let frameAskedAt: number | null = null
+/** Whether the frame outstanding now has already been noted as overdue: once per frame, not once a second. */
+let overdueNoted = false
 let lastRenderAt: number | null = null
 
 /**
@@ -234,6 +268,7 @@ function askForAFrame(): void {
   const id = requestRealFrame(() => {
     const waited = Date.now() - asked
     frameAskedAt = null
+    overdueNoted = false
     lastFrameAt = Date.now()
     counts.frames += 1
     if (waited > counts.worstFrameWait) counts.worstFrameWait = waited
@@ -248,6 +283,16 @@ function askForAFrame(): void {
   /* Only counted as outstanding once it was actually asked for. Where there is
      no window to ask, nothing is pending and nothing is accused. */
   if (id !== null) frameAskedAt = asked
+}
+
+/**
+ * Whether this tick says something: whenever there is something noted, and
+ * otherwise only the one clock — shown, holding a live terminal socket, and
+ * quiet for {@link STANDING}. Hidden, or with no shell open, never on a clock.
+ */
+export function dueToSpeak(now: { noted: number; visible: boolean; liveSockets: number; quietFor: number }): boolean {
+  if (now.noted > 0) return true
+  return now.visible && now.liveSockets > 0 && now.quietFor >= STANDING
 }
 
 let running = false
@@ -266,8 +311,20 @@ export function watchThisPage(): void {
   note('the page loaded')
 
   let due = Date.now() + 1000
-  let sinceBeacon = 0
+  let lastPost = Date.now()
   let posting = false
+  let retryAt = 0
+  let retryWait = RETRY_FIRST
+
+  /*
+   * The page's presence: one held stream. Its close is the page leaving or
+   * being hidden, which the server writes into its ring; from this side,
+   * `probe` asks the health check when it drops, which is how the cover in
+   * `app.tsx` learns the server has gone or is no longer the process that
+   * served this page. The ticket rides the query: an `EventSource` sends no
+   * header.
+   */
+  subscribe('/api/trace/page/events', () => {}, { query: { ticket: ticket() }, probe: true })
 
   setInterval(() => {
     const now = Date.now()
@@ -281,13 +338,23 @@ export function watchThisPage(): void {
     if (lag > 1000) note(`the page's own timer was ${(lag / 1000).toFixed(1)}s late; something held the main thread`)
 
     askForAFrame()
+    /* Layer 4, said as an event: this timer runs, so JavaScript does, and the
+       window has not served the frame asked for. Once per outstanding frame. */
+    if (frameAskedAt !== null && !overdueNoted && now - frameAskedAt >= FRAME_OVERDUE) {
+      overdueNoted = true
+      note(
+        `an animation frame has been outstanding for ${((now - frameAskedAt) / 1000).toFixed(1)}s while the page's timer runs; the page was ${document.visibilityState}`,
+      )
+    }
 
-    sinceBeacon += 1000
-    if (sinceBeacon < BEACON || posting) return
-    sinceBeacon = 0
+    if (posting || now < retryAt) return
+    /* Something to say goes now. With nothing to say, only the one clock above:
+       shown, holding a live terminal socket, and quiet for STANDING. */
+    if (!dueToSpeak({ noted: noted.length, visible: document.visibilityState === 'visible', liveSockets: counts.sockets.live, quietFor: now - lastPost })) return
 
     const said = standingNow()
     posting = true
+    lastPost = now
     /*
      * `keepalive` so a beacon sent as the page is being torn down still goes.
      * The protocol's `ask` carries the ticket in the header every module uses
@@ -295,16 +362,22 @@ export function watchThisPage(): void {
      * unframed, and a diagnostic that throws into somebody's console when it
      * cannot reach home is a diagnostic that looks like the bug.
      *
-     * It is also how this page learns its server has gone, or is no longer the
-     * process that served it: `ask` notes what every answer says about the
-     * server, and the cover in `app.tsx` draws that.
+     * A post that did not land is tried again after a pause that doubles, so a
+     * page whose server is gone does not knock every second with its notes.
      */
     void ask('/api/trace/page', { body: { standing: said }, keepalive: true })
       .then((answer) => {
         /* Only what was actually delivered is forgotten. A beacon that failed
            leaves its lines in the ring for the next one, which is the point of
            shipping them at all. */
-        if (answer.ok) noted = noted.slice(said.noted.length)
+        if (answer.ok) {
+          noted = noted.slice(said.noted.length)
+          retryAt = 0
+          retryWait = RETRY_FIRST
+        } else {
+          retryAt = Date.now() + retryWait
+          retryWait = Math.min(retryWait * 2, RETRY_MOST)
+        }
       })
       .finally(() => {
         posting = false
