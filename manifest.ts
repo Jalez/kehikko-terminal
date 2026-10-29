@@ -155,6 +155,9 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     { id: 'terminal', label: 'Terminal', scope: 'project', scopeSays: 'shells in this project’s folder, whatever epic is open' },
   ],
   extensions: { emits: [], consumes: [] },
+  /* Its shells run in its own process, so a restart of it ends them (protocol 2.33.0): a host does
+     not restart it on its own account — an automatic update waits for its shells to end. */
+  holds: ['live-sessions'],
   /* Why this module has nothing to narrow by the parts of an epic. */
   partless: 'A shell: nothing in it belongs to an epic.',
   declares: {
