@@ -158,6 +158,10 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   /* Its shells run in its own process, so a restart of it ends them (protocol 2.33.0): a host does
      not restart it on its own account — an automatic update waits for its shells to end. */
   holds: ['live-sessions'],
+  /* A shell must not be resized by a hover (protocol 2.42.0): a resize is a SIGWINCH and a full
+     redraw. The host's focus-mode header and footer come OVER the page instead, and the view keeps
+     its last line above them (`src/view/keep-last.ts`). An older host ignores this and pushes. */
+  reveal: 'over',
   /* Why this module has nothing to narrow by the parts of an epic. */
   partless: 'A shell: nothing in it belongs to an epic.',
   declares: {

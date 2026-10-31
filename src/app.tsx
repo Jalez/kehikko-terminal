@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
-import type { FooterItemInput, HeaderItemInput } from 'kehikot-module-protocol'
+import type { Covered, FooterItemInput, HeaderItemInput } from 'kehikot-module-protocol'
 import { probeServer } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
@@ -84,7 +84,7 @@ export function App() {
   const presses = useRef<Press | null>(null)
   /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
   const [drawn, setDrawn] = useState(headerDrawn)
-  const { where, projectPath, projectId, theme, header, footer, drawsFooter } = useHost(ID, {
+  const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered } = useHost(ID, {
     onPress: (press) => {
       /* A press on the footer says the host draws the footer; only a header press says it draws the header. */
       if (press.place !== 'footer') {
@@ -124,7 +124,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} covered={covered} />
 }
 
 /**
@@ -167,6 +167,7 @@ export function Shells({
   drawn = false,
   footer,
   drawsFooter = false,
+  covered,
 }: {
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
@@ -192,6 +193,8 @@ export function Shells({
    * always was, and nothing is declared.
    */
   drawsFooter?: boolean
+  /** What the host's revealed header and footer cover of the page (protocol 2.42.0); handed to the view on screen. See `view/keep-last.ts`. */
+  covered?: Covered
 }) {
   const [held, setHeld] = useState<Held>(NOTHING_HELD)
 
@@ -402,6 +405,7 @@ export function Shells({
                 theme={theme}
                 at={session.at}
                 shown={shown}
+                covered={shown ? covered : undefined}
                 onStanding={(next) => setStandings((all) => ({ ...all, [id]: next }))}
               />
             </div>
