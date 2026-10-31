@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
-import type { HeaderItemInput } from 'kehikot-module-protocol'
+import type { FooterItemInput, HeaderItemInput } from 'kehikot-module-protocol'
 import { probeServer } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
+import { FOOTER_TRY_AGAIN, footerItems } from './view/footer.ts'
 import { NOTHING_HELD, dismiss, forget, label, moved, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
 import { HeaderFallback, headerDrawn, rememberHeaderDrawn } from '@/header-fallback'
 
-/** One press on a header item: nothing or `true` for taken, a sentence for not taken, and why. */
-type Press = (press: { item: string; value?: string | boolean }) => string | boolean | void
+/**
+ * One press on a header item, or on a footer item (`place: 'footer'`, protocol 2.38.0): nothing or
+ * `true` for taken, a sentence for not taken, and why.
+ */
+type Press = (press: { item: string; value?: string | boolean; place?: 'header' | 'footer' }) => string | boolean | void
 
 const ID = 'kehikot.terminal'
 /** What the shared sentences call this module. */
@@ -80,10 +84,13 @@ export function App() {
   const presses = useRef<Press | null>(null)
   /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
   const [drawn, setDrawn] = useState(headerDrawn)
-  const { where, projectPath, projectId, theme, header } = useHost(ID, {
+  const { where, projectPath, projectId, theme, header, footer, drawsFooter } = useHost(ID, {
     onPress: (press) => {
-      rememberHeaderDrawn()
-      setDrawn(true)
+      /* A press on the footer says the host draws the footer; only a header press says it draws the header. */
+      if (press.place !== 'footer') {
+        rememberHeaderDrawn()
+        setDrawn(true)
+      }
       return presses.current ? presses.current(press) : 'There is no shell here yet.'
     },
     /*
@@ -117,7 +124,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} />
 }
 
 /**
@@ -158,6 +165,8 @@ export function Shells({
   header,
   presses,
   drawn = false,
+  footer,
+  drawsFooter = false,
 }: {
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
@@ -175,6 +184,14 @@ export function Shells({
   presses?: MutableRefObject<Press | null>
   /** Whether a host has pressed one: such a host draws the header. */
   drawn?: boolean
+  /** Declare the footer items, whole (`kehikot.footer`, protocol 2.38.0). Called only when `drawsFooter`. */
+  footer?: (items: FooterItemInput[]) => void
+  /**
+   * Whether the host said in its greeting that it draws the module's footer. Only then is the footer
+   * declared and the page's own strip under the shell not drawn; otherwise the strip is drawn as it
+   * always was, and nothing is declared.
+   */
+  drawsFooter?: boolean
 }) {
   const [held, setHeld] = useState<Held>(NOTHING_HELD)
 
@@ -320,11 +337,27 @@ export function Shells({
   useEffect(() => () => header?.([]), [header])
   useEffect(() => {
     if (!presses) return
-    presses.current = ({ item }) => (item === 'new-shell' ? restartRef.current() : 'That is not something a terminal has.')
+    presses.current = ({ item, place }) =>
+      place === 'footer'
+        ? item === FOOTER_TRY_AGAIN
+          ? knock()
+          : 'That is not in this footer.'
+        : item === 'new-shell'
+          ? restartRef.current()
+          : 'That is not something a terminal has.'
     return () => {
       presses.current = null
     }
   }, [presses])
+
+  /*
+   * The footer the host draws, when it says it draws one: the strip below as items (`view/footer.ts`),
+   * declared again only when it says something different, and `[]` when there is nothing to say.
+   */
+  const footerKey = JSON.stringify(footerItems(cover, current !== null, NAME))
+  useEffect(() => {
+    if (drawsFooter) footer?.(JSON.parse(footerKey) as FooterItemInput[])
+  }, [drawsFooter, footer, footerKey])
 
   return (
     <div className="bg-background text-foreground relative flex h-dvh min-h-0 flex-col">
@@ -376,7 +409,7 @@ export function Shells({
         })}
       </div>
 
-      {cover && current && (
+      {cover && current && !drawsFooter && (
         <div className="flex items-center justify-between gap-2 border-t px-2 py-1" role="status" data-cover={cover}>
           <span className="text-muted-foreground truncate text-[11px]">{COVER_WORDS[cover](NAME)}</span>
           {cover === 'down' && (

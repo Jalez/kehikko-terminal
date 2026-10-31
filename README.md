@@ -72,6 +72,22 @@ switches epic, comes back, and reads the rows xterm drew for each. The header
 says how to start the two servers it needs, and why `KEHIKOT_MODULES_DIR` must
 point somewhere disposable while you do.
 
+### When the server stops: the footer
+
+Once a shell has been on screen, a cover never hides it: when this module's
+own server stops answering (or the page finds it is older than its server), the
+shell's last screen stays and the cover's sentence goes in a strip under it,
+with "Try again" while the server is down.
+
+A host that says in its greeting that it draws a module's footer
+(`hello.footer`, protocol 2.38.0) draws that strip instead, from what the page
+declares (`kehikot.footer`, `src/view/footer.ts`): the sentence as a `text`
+(`level: 'warn'` while the server is down) and "Try again" as a `run` with the
+`refresh` icon, at the row's end. With nothing covering the shell the page
+declares `[]`, and the host draws no row. A press arrives with
+`place: 'footer'` and asks whether the server is there now. Any other host gets
+the page's own strip, exactly as before, and nothing is declared.
+
 ### What was here and is gone
 
 A list of every Claude Code chat on the machine, down the left, with a press to
