@@ -52,7 +52,7 @@ const { Shells } = await import('../src/app.tsx')
 
 /* What the page declared to the host's header, whole each time, and where a press on it is taken. */
 let declared: HeaderItemInput[][] = []
-const presses: { current: ((press: { item: string; value?: string | boolean }) => string | boolean | void) | null } = { current: null }
+const presses: { current: ((press: { item: string; value?: string | boolean; place?: 'header' | 'footer' }) => string | boolean | void) | null } = { current: null }
 const header = (items: HeaderItemInput[]) => {
   declared.push(items)
 }
@@ -291,5 +291,57 @@ describe('a project folder renamed while its shell runs', () => {
     rerender(<Hosted projectPath={A} projectId={ID} />)
     expect(onScreen(container).shown).toEqual([A])
     expect(unmounted).toEqual([])
+  })
+})
+
+describe('the footer the host draws, and the strip the page draws otherwise', () => {
+  let footers: unknown[][] = []
+  const footer = (items: unknown[]) => void footers.push(items)
+  afterEach(() => {
+    footers = []
+  })
+  const pressFooter = (item: string) => {
+    const out: { answer: unknown } = { answer: undefined }
+    act(() => {
+      out.answer = presses.current?.({ item, place: 'footer' })
+    })
+    return out.answer
+  }
+
+  test('a host that does not draw it: the strip under the shell, and nothing declared', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} footer={footer} />)
+    rerender(<Hosted projectPath={A} cover="down" footer={footer} />)
+    expect(container.querySelector('[data-cover]')?.getAttribute('data-cover')).toBe('down')
+    expect(footers).toEqual([])
+  })
+
+  test('a host that draws it: no strip, the sentence and Try again declared, and [] once it is answering', () => {
+    const { container, rerender } = render(<Hosted projectPath={A} footer={footer} drawsFooter />)
+    expect(footers.at(-1)).toEqual([])
+    rerender(<Hosted projectPath={A} cover="down" footer={footer} drawsFooter />)
+    expect(container.querySelector('[data-cover]')).toBeNull()
+    expect(footers.at(-1)).toMatchObject([
+      { kind: 'text', id: 'cover', text: 'Terminal’s own server is not answering.', level: 'warn' },
+      { kind: 'run', id: 'try-again', label: 'Try again', icon: 'refresh' },
+    ])
+    rerender(<Hosted projectPath={A} footer={footer} drawsFooter />)
+    expect(footers.at(-1)).toEqual([])
+  })
+
+  test('Try again pressed in the footer asks whether the server is there, and is taken', () => {
+    const asked: string[] = []
+    const had = globalThis.fetch
+    globalThis.fetch = ((url: string) => {
+      asked.push(String(url))
+      return Promise.resolve(new Response('{}', { headers: { 'content-type': 'application/json' } }))
+    }) as unknown as typeof fetch
+    try {
+      render(<Hosted projectPath={A} cover="down" footer={footer} drawsFooter />)
+      expect(pressFooter('try-again')).toBeUndefined()
+      expect(asked.length).toBeGreaterThan(0)
+      expect(pressFooter('new-shell')).toBe('That is not in this footer.')
+    } finally {
+      globalThis.fetch = had
+    }
   })
 })
