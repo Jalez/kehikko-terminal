@@ -7,6 +7,7 @@ import { NOT_COVERED, probeServer, ticket, type Covered } from 'kehikot-module-p
 import { useKeepLast } from './keep-last.ts'
 import { letGo } from './let-go.ts'
 import { settleSize } from './settle-size.ts'
+import { readStatusFrame, type ShellStatus } from './status-frame.ts'
 import { note, seen } from './trace.ts'
 
 /**
@@ -170,6 +171,7 @@ export function TerminalView({
   at,
   shown,
   onStanding,
+  onStatus,
   covered = NOT_COVERED,
 }: {
   theme: 'light' | 'dark'
@@ -201,6 +203,12 @@ export function TerminalView({
   shown: boolean
   onStanding?: (standing: Standing) => void
   /**
+   * What the server read about this shell: its folder, which shell, whether a command runs in front
+   * of it (`status-frame.ts`). It arrives as a binary frame, never mixed with the output, and says
+   * what the footer shows.
+   */
+  onStatus?: (status: ShellStatus) => void
+  /**
    * How much of this page the host's revealed header and footer cover now (`useHost().covered`,
    * protocol 2.42.0; this module says `reveal: 'over'`). The emulator is MOVED so its last line stays
    * above them, never refitted: a refit is a SIGWINCH and a full redraw, twice per hover. See
@@ -226,6 +234,8 @@ export function TerminalView({
      otherwise tear down the socket and the shell with it. */
   const told = useRef(onStanding)
   told.current = onStanding
+  const statusTold = useRef(onStatus)
+  statusTold.current = onStatus
 
   const move = (next: Standing) => {
     setStanding(next)
@@ -353,8 +363,16 @@ export function TerminalView({
       /* Output, straight through. Never parsed — it is a byte stream from a
          program, and the moment this side starts looking for structure in it, a
          program that prints JSON becomes a program that can talk to this page. */
+      /* Bytes are the server's status frame (`status-frame.ts`), and only ever that: the pty's
+         output is sent as text, so nothing a program prints can arrive as bytes. */
+      live.binaryType = 'arraybuffer'
       live.onmessage = (event: MessageEvent) => {
-        const data = typeof event.data === 'string' ? event.data : ''
+        if (typeof event.data !== 'string') {
+          const status = event.data instanceof ArrayBuffer ? readStatusFrame(event.data) : null
+          if (status) statusTold.current?.(status)
+          return
+        }
+        const data = event.data
         /* Sizes, never contents. What comes out of somebody's shell is their
            session; see the essay in `trace.ts`. */
         seen.message(data.length)

@@ -72,21 +72,44 @@ switches epic, comes back, and reads the rows xterm drew for each. The header
 says how to start the two servers it needs, and why `KEHIKOT_MODULES_DIR` must
 point somewhere disposable while you do.
 
-### When the server stops: the footer
+### The footer: what is going on in the shell
+
+The footer says what is going on in the shell on screen, so a container folded
+to its header and footer still says it. The header holds only New shell, which
+starts something; the footer holds what you glance at:
+
+- **Running `vim`** while a command is in front of the shell, **Idle** while it
+  waits at its prompt. First, because it is the one text a very narrow row keeps.
+- **The folder** the shell is in, the home folder as `~`, whole on hover. It is
+  the shell's own working directory, so it follows `cd`.
+- **The shell** (`zsh`, `bash`) at the end, the first to go when the row is narrow.
+- **Why the shell ended**, once it has, as a warning. New shell, in the header,
+  opens another; the item there no longer repeats the reason.
+- **The folder renamed** under a running shell, with Dismiss beside it.
+
+The server reads the folder and the foreground process from the operating system
+(`status.ts`: `lsof` on macOS, `/proc` on Linux, `ps` for the terminal's
+foreground process group) only after the shell printed something, and every five
+seconds besides, so an idle shell costs almost nothing. It sends what it read as
+a **binary** websocket frame (`src/view/status-frame.ts`), and only when it
+changed. Pty output always goes out as text, so nothing a program prints can be
+read as a status.
+
+#### When the server stops
 
 Once a shell has been on screen, a cover never hides it: when this module's
 own server stops answering (or the page finds it is older than its server), the
-shell's last screen stays and the cover's sentence goes in a strip under it,
-with "Try again" while the server is down.
+shell's last screen stays and the footer says only the cover's sentence
+(`level: 'warn'` while the server is down), with "Try again" as a `run` with the
+`refresh` icon at the row's end, which asks whether the server is there now.
 
-A host that says in its greeting that it draws a module's footer
-(`hello.footer`, protocol 2.38.0) draws that strip instead, from what the page
-declares (`kehikot.footer`, `src/view/footer.ts`): the sentence as a `text`
-(`level: 'warn'` while the server is down) and "Try again" as a `run` with the
-`refresh` icon, at the row's end. With nothing covering the shell the page
-declares `[]`, and the host draws no row. A press arrives with
-`place: 'footer'` and asks whether the server is there now. Any other host gets
-the page's own strip, exactly as before, and nothing is declared.
+#### A host that draws no footer
+
+Declared only to a host that says in its greeting that it draws a module's
+footer (`hello.footer`, protocol 2.38.0). Any other host gets the page's own
+strips exactly as before: the cover's sentence and Try again under the shell,
+the renamed folder above it, and why the shell ended on New shell. Nothing is
+declared.
 
 ### What was here and is gone
 

@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 
 import type { HeaderItemInput } from 'kehikot-module-protocol'
 
+import type { ShellStatus } from '../src/view/status-frame.ts'
 import type { Standing } from '../src/view/terminal-view.tsx'
 
 /**
@@ -25,16 +26,19 @@ import type { Standing } from '../src/view/terminal-view.tsx'
 const mounted: string[] = []
 const unmounted: string[] = []
 const tell = new Map<string, (standing: Standing) => void>()
+const report = new Map<string, (status: ShellStatus) => void>()
 
 mock.module('../src/view/terminal-view.tsx', () => ({
   TerminalView: ({
     at,
     shown,
     onStanding,
+    onStatus,
   }: {
     at: string | null
     shown: boolean
     onStanding?: (standing: Standing) => void
+    onStatus?: (status: ShellStatus) => void
   }) => {
     const name = at ?? 'home'
     useEffect(() => {
@@ -44,6 +48,7 @@ mock.module('../src/view/terminal-view.tsx', () => ({
       }
     }, [name])
     if (onStanding) tell.set(name, onStanding)
+    if (onStatus) report.set(name, onStatus)
     return <div data-terminal={name} data-shown={shown ? 'yes' : 'no'} />
   },
 }))
@@ -77,6 +82,7 @@ afterEach(() => {
   mounted.length = 0
   unmounted.length = 0
   tell.clear()
+  report.clear()
   declared = []
   presses.current = null
 })
@@ -343,5 +349,32 @@ describe('the footer the host draws, and the strip the page draws otherwise', ()
     } finally {
       globalThis.fetch = had
     }
+  })
+
+  test('what is going on in the shell on screen: busy or idle, its folder and the shell, read again as it changes', () => {
+    render(<Hosted projectPath={A} footer={footer} drawsFooter />)
+    act(() => tell.get(A)?.({ at: 'live' }))
+    act(() => report.get(A)?.({ cwd: A, shown: A, shell: 'zsh', busy: null }))
+    expect(footers.at(-1)).toMatchObject([{ id: 'state', text: 'Idle' }, { id: 'cwd', text: A }, { id: 'shell', text: 'zsh' }])
+    act(() => report.get(A)?.({ cwd: `${A}/src`, shown: `${A}/src`, shell: 'zsh', busy: 'vim' }))
+    expect(footers.at(-1)).toMatchObject([{ id: 'state', text: 'Running vim' }, { id: 'cwd', text: `${A}/src` }, { id: 'shell' }])
+  })
+
+  test('a host that draws it: why the shell ended is the footer’s, not said again on New shell', () => {
+    render(<Hosted projectPath={A} footer={footer} drawsFooter />)
+    act(() => tell.get(A)?.({ at: 'closed', why: 'the shell exited (0)' }))
+    expect(latest()).toMatchObject({ state: 'failed', result: null, disabled: null })
+    expect(footers.at(-1)).toMatchObject([{ id: 'ended', text: 'The shell ended: the shell exited (0)', level: 'warn' }])
+  })
+
+  test('a host that draws it: the renamed folder is a footer line with Dismiss, and the page draws none', () => {
+    const ID = '6f1c2a9e-0b4d-4c55-9a51-2f7e1d3c8b10'
+    const { container, rerender } = render(<Hosted projectPath={A} projectId={ID} footer={footer} drawsFooter />)
+    rerender(<Hosted projectPath={`${A}-renamed`} projectId={ID} footer={footer} drawsFooter />)
+    expect(container.querySelector('[data-renamed]')).toBeNull()
+    expect(footers.at(-1)).toMatchObject([{ id: 'renamed', level: 'warn' }, { id: 'dismiss-renamed', kind: 'run' }])
+    expect(pressFooter('dismiss-renamed')).toBe(true)
+    expect(footers.at(-1)).toEqual([])
+    expect(pressFooter('dismiss-renamed')).toBe('There is no renamed folder to dismiss.')
   })
 })
