@@ -4,7 +4,8 @@ import { probeServer } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
-import { FOOTER_TRY_AGAIN, footerItems } from './view/footer.ts'
+import { FOOTER_DISMISS_RENAMED, FOOTER_TRY_AGAIN, footerItems } from './view/footer.ts'
+import type { ShellStatus } from './view/status-frame.ts'
 import { NOTHING_HELD, dismiss, forget, label, moved, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
 import { Button } from '@/components/ui/button'
@@ -210,6 +211,8 @@ export function Shells({
   const [standings, setStandings] = useState<Record<string, Standing>>({})
   const known = useRef(standings)
   known.current = standings
+  /* What the server last read about each shell, by label (`status.ts`): what the footer says. */
+  const [statuses, setStatuses] = useState<Record<string, ShellStatus>>({})
 
   /* What is held, readable from inside the effect below without being one of
      its dependencies. The effect must run when the CANVAS moves and not when a
@@ -309,6 +312,14 @@ export function Shells({
   }
   const restartRef = useRef(restartHere)
   restartRef.current = restartHere
+  /* Dismiss, beside the renamed folder in the footer. */
+  const dismissRenamed = (): string | true => {
+    if (!current || renamedTo === null) return 'There is no renamed folder to dismiss.'
+    setHeld((before) => dismiss(before, current.key))
+    return true
+  }
+  const dismissRef = useRef(dismissRenamed)
+  dismissRef.current = dismissRenamed
 
   /*
    * The header: one Run item, declared again only when it is a different item — the shell ending,
@@ -326,13 +337,14 @@ export function Shells({
         icon: 'terminal',
         /* Failed is what the Run trigger shows without the menu being opened: this shell has ended. */
         state: dead ? 'failed' : 'idle',
-        result: why ? (why.length > 32 ? `${why.slice(0, 31)}…` : why) : null,
+        /* Why it ended is a readout: the footer's, where a host draws one; else said on the item. */
+        result: why && !drawsFooter ? (why.length > 32 ? `${why.slice(0, 31)}…` : why) : null,
         disabled: dead || relocated ? null : 'The shell here is still running.',
         /* Pressed on a shell that is still running (its folder was renamed), it ends that shell: asked first. */
         confirm: !dead && relocated,
       },
     ]
-  }, [current?.key, Boolean(current), cover === null, dead, relocated, standing?.at === 'closed' ? standing.why : null])
+  }, [current?.key, Boolean(current), cover === null, dead, relocated, standing?.at === 'closed' ? standing.why : null, drawsFooter])
   const itemsKey = JSON.stringify(items)
   useEffect(() => {
     header?.(JSON.parse(itemsKey) as HeaderItemInput[])
@@ -344,7 +356,9 @@ export function Shells({
       place === 'footer'
         ? item === FOOTER_TRY_AGAIN
           ? knock()
-          : 'That is not in this footer.'
+          : item === FOOTER_DISMISS_RENAMED
+            ? dismissRef.current()
+            : 'That is not in this footer.'
         : item === 'new-shell'
           ? restartRef.current()
           : 'That is not something a terminal has.'
@@ -357,7 +371,16 @@ export function Shells({
    * The footer the host draws, when it says it draws one: the strip below as items (`view/footer.ts`),
    * declared again only when it says something different, and `[]` when there is nothing to say.
    */
-  const footerKey = JSON.stringify(footerItems(cover, current !== null, NAME))
+  const footerKey = JSON.stringify(
+    footerItems({
+      cover,
+      shell: current !== null,
+      name: NAME,
+      status: current ? (statuses[label(current)] ?? null) : null,
+      ended: standing?.at === 'closed' ? standing.why : null,
+      renamed: renamedTo,
+    }),
+  )
   useEffect(() => {
     if (drawsFooter) footer?.(JSON.parse(footerKey) as FooterItemInput[])
   }, [drawsFooter, footer, footerKey])
@@ -375,7 +398,7 @@ export function Shells({
           the thing somebody wants to read, and the words go in the strip
           below instead of over it. */}
       {cover && !current && <Cover state={cover} name={NAME} onRetry={knock} />}
-      {current && renamedTo !== null && (
+      {current && renamedTo !== null && !drawsFooter && (
         /* One line, said once per rename, until the person dismisses it. Text only: the folder is a string. */
         <div className="flex items-center justify-between gap-2 border-b px-2 py-1" role="status" data-renamed={renamedTo}>
           <span className="text-muted-foreground min-w-0 text-[11px]">
@@ -407,6 +430,7 @@ export function Shells({
                 shown={shown}
                 covered={shown ? covered : undefined}
                 onStanding={(next) => setStandings((all) => ({ ...all, [id]: next }))}
+                onStatus={(next) => setStatuses((all) => ({ ...all, [id]: next }))}
               />
             </div>
           )

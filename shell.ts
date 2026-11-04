@@ -7,6 +7,7 @@ import type { RunSockets } from 'kehikot-module-protocol/run'
 import { mintTicket, personEnv, sameTicket } from 'kehikot-module-protocol/serve'
 
 import { spawnPty, type Pty } from './pty.ts'
+import { statusFrame, statusOf, statusWatch, type ShellStatus } from './status.ts'
 import * as trace from './trace.ts'
 
 /**
@@ -307,7 +308,8 @@ export interface Connection {
   open: () => boolean
   /** Bytes queued on the socket and not yet sent. */
   buffered: () => number
-  send: (text: string) => void
+  /** Text is pty output; bytes are a status frame (`status.ts`), which pty output can never be. */
+  send: (text: string | Uint8Array) => void
   close: (code: number, reason: string) => void
   terminate: () => void
 }
@@ -459,8 +461,10 @@ export function serveTerminals(server: Upgradable, port: number, log: (line: str
  * spawned until the first frame proves itself. A connection that never speaks
  * is closed.
  */
-export function session(ws: Connection, log: (line: string) => void): Session {
+export function session(ws: Connection, log: (line: string) => void, status: (pid: number, file: string) => Promise<ShellStatus> = statusOf): Session {
   let pty: Pty | null = null
+  /* The footer's readout of the shell (`status.ts`): read after output, sent when it changed. */
+  let watch: { poke: () => void; stop: () => void } | null = null
 
   /*
    * The record of this one connection, opened HERE rather than at spawn.
@@ -498,6 +502,8 @@ export function session(ws: Connection, log: (line: string) => void): Session {
 
   const stop = () => {
     clearTimeout(silent)
+    watch?.stop()
+    watch = null
     trace.reaped(held)
     if (!pty) return
     const doomed = pty
@@ -576,6 +582,13 @@ export function session(ws: Connection, log: (line: string) => void): Session {
           })
           pty = started
           trace.spawned(held, started.pid, where, said.cols, said.rows)
+          watch = statusWatch(
+            () => status(started.pid, file),
+            (now) => {
+              if (ws.open()) ws.send(statusFrame(now))
+            },
+          )
+          watch.poke()
           started.onData((chunk: string) => {
             /*
              * The hot path, and the whole cost of the tracer on it is two
@@ -590,9 +603,12 @@ export function session(ws: Connection, log: (line: string) => void): Session {
              */
             const alive = ws.open()
             if (alive) ws.send(chunk)
+            watch?.poke()
             trace.fromPty(held, chunk.length, ws.buffered(), alive, chunk)
           })
           started.onExit(({ exitCode }: { exitCode: number }) => {
+            watch?.stop()
+            watch = null
             trace.exited(held, exitCode)
             if (ws.open()) shut(4000, `the shell exited (${exitCode})`)
           })
