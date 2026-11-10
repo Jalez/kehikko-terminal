@@ -91,7 +91,7 @@ export function App() {
   const [drawn, setDrawn] = useState(headerDrawn)
   const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered, findResult, ready } = useHost(ID, {
     /* The host's find bar (protocol 2.69.0): the session on screen searches its screen and scrollback
-       (`xtermFind`, protocol 2.72.0, set in the slot by `TerminalView`). No session on screen is nothing to search. */
+       (`xtermFind`, protocol 2.74.0, set in the slot by `TerminalView`). No session on screen is nothing to search. */
     onFind: finder.onFind,
     onPress: (press) => {
       /* A press on the footer says the host draws the footer; only a header press says it draws the header. */
