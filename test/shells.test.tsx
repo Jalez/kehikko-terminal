@@ -150,9 +150,9 @@ describe('a shell per project', () => {
     expect(mounted).toEqual([A])
   })
 
-  test('while nothing has been heard yet, the page says what it is waiting for', () => {
+  test('while nothing has been heard yet, the page draws no waiting words of its own: the host\u2019s cover is up (protocol 2.70.0)', () => {
     const { container } = render(<Shells theme="light" where="listening" projectPath={null} cover="waiting" />)
-    expect(container.textContent).toContain('Waiting for Kehikot…')
+    expect(container.textContent).not.toContain('Waiting for Kehikot')
     expect(mounted).toEqual([])
   })
 

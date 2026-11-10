@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import type { FindCount } from 'kehikot-module-protocol/client'
+import { xtermFind, type FindSlot, type XtermFind } from 'kehikot-module-protocol/client/find'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
@@ -173,7 +176,22 @@ export function TerminalView({
   onStanding,
   onStatus,
   covered = NOT_COVERED,
+  finder,
+  onFound,
+  onDrawn,
 }: {
+  /**
+   * Said once, when the first of the shell's output is drawn in the emulator or the socket ends
+   * (protocol 2.70.0): the page's `ready()`, so the host's cover comes off over a drawn screen.
+   */
+  onDrawn?: () => void
+  /**
+   * Where the view puts its search of the screen and the scrollback, for the host's find bar
+   * (protocol 2.69.0, `xtermFind`). Given only to the view on screen.
+   */
+  finder?: FindSlot
+  /** The count again, when new output changed it under an open search. */
+  onFound?: (count: FindCount) => void
   theme: 'light' | 'dark'
   /**
    * The folder this shell is for: the project's, or null for home.
@@ -227,6 +245,21 @@ export function TerminalView({
 
   const holder = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
+  /* The search of this view's emulator, once it has one (`xtermFind`), and who hears a count that changed by itself. */
+  const searching = useRef<XtermFind | null>(null)
+  const found = useRef(onFound)
+  found.current = onFound
+  const themeNow = useRef(theme)
+  themeNow.current = theme
+  /* The host's find bar, for the view on screen: its search of the screen and the scrollback. */
+  useEffect(() => {
+    if (!finder) return
+    const find: NonNullable<FindSlot['current']> = (query, ask) => (searching.current ? searching.current(query, ask) : 'unsupported')
+    finder.current = find
+    return () => {
+      if (finder.current === find) finder.current = null
+    }
+  }, [finder])
   const [, setStanding] = useState<Standing>({ at: 'opening' })
 
   /* Held in a ref and read inside the effect rather than listed as a
@@ -234,6 +267,8 @@ export function TerminalView({
      otherwise tear down the socket and the shell with it. */
   const told = useRef(onStanding)
   told.current = onStanding
+  const drawnNow = useRef(onDrawn)
+  drawnNow.current = onDrawn
   const statusTold = useRef(onStatus)
   statusTold.current = onStatus
 
@@ -264,9 +299,15 @@ export function TerminalView({
       scrollback: 5000,
       cursorBlink: true,
       theme: palette(theme),
+      /* The search addon's marks are decorations, which xterm still calls a proposed API. */
+      allowProposedApi: true,
     })
     const fit = new FitAddon()
     terminal.loadAddon(fit)
+    const search = new SearchAddon()
+    terminal.loadAddon(search)
+    const finding = xtermFind(search, terminal, { onCount: (count) => found.current?.(count), theme: () => themeNow.current })
+    searching.current = finding
     terminal.open(node)
     term.current = terminal
     seen.emulatorMade()
@@ -376,7 +417,7 @@ export function TerminalView({
         /* Sizes, never contents. What comes out of somebody's shell is their
            session; see the essay in `trace.ts`. */
         seen.message(data.length)
-        terminal.write(data)
+        terminal.write(data, () => drawnNow.current?.())
         seen.written()
       }
 
@@ -391,6 +432,7 @@ export function TerminalView({
           void probeServer()
         }
         move({ at: 'closed', why })
+        drawnNow.current?.()
       }
 
       live.onerror = () => {
@@ -552,6 +594,8 @@ export function TerminalView({
          of rather than closed — see `let-go.ts` — and counted out here, since
          its own `close` will reach nobody. */
       if (socket && letGo(socket)) seen.socketClosed('the view went away while it was connecting')
+      searching.current = null
+      finding.dispose()
       terminal.dispose()
       seen.emulatorDisposed()
       seen.viewDisposed()

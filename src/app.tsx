@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import type { Covered, FooterItemInput, HeaderItemInput } from 'kehikot-module-protocol'
-import { probeServer } from 'kehikot-module-protocol/client'
+import { probeServer, type FindCount } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
+import { findSlot, type FindSlot } from 'kehikot-module-protocol/client/find'
 import { FOOTER_DISMISS_RENAMED, FOOTER_TRY_AGAIN, footerItems } from './view/footer.ts'
+import { headerItems } from './view/header.ts'
 import type { ShellStatus } from './view/status-frame.ts'
 import { NOTHING_HELD, dismiss, forget, label, moved, restart, show, wanted, type Held } from './view/sessions.ts'
 import { note, seen } from './view/trace.ts'
@@ -83,9 +85,14 @@ export function App() {
    * because `uses` is empty and a terminal has no questions.
    */
   const presses = useRef<Press | null>(null)
+  /** The search of the shell on screen, for the host's find bar (`TerminalView`). */
+  const finder = useMemo(findSlot, [])
   /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
   const [drawn, setDrawn] = useState(headerDrawn)
-  const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered } = useHost(ID, {
+  const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered, findResult, ready } = useHost(ID, {
+    /* The host's find bar (protocol 2.69.0): the session on screen searches its screen and scrollback
+       (`xtermFind`, protocol 2.74.0, set in the slot by `TerminalView`). No session on screen is nothing to search. */
+    onFind: finder.onFind,
     onPress: (press) => {
       /* A press on the footer says the host draws the footer; only a header press says it draws the header. */
       if (press.place !== 'footer') {
@@ -108,6 +115,12 @@ export function App() {
     onGoto: (_goto, answer) => {
       answer(false, 'A terminal holds a shell, not a document: there is nothing here to walk to.')
     },
+  }, {
+    /* The kept view (protocol 2.70.0) has nothing to keep here: the header is one run (New shell), the
+       document does not scroll, and the shell's scrollback is the emulator's own, drawn again from the
+       session on every attach (so it is not marked `data-kehikot-scroll`). It would need
+       `uses: ['state:keep']`, a capability this module would never exercise (manifest.ts). */
+    keepView: false,
   })
 
   /**
@@ -125,7 +138,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} covered={covered} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} covered={covered} finder={finder} onFound={findResult} onDrawn={ready} />
 }
 
 /**
@@ -169,7 +182,20 @@ export function Shells({
   footer,
   drawsFooter = false,
   covered,
+  finder,
+  onFound,
+  onDrawn,
 }: {
+  /**
+   * The page is drawn (protocol 2.70.0, the host's `ready()`): the first of a shell's output on screen,
+   * or a cover of words with no shell to wait for. Never gated on being visible: the host keeps the
+   * page hidden while its cover is up.
+   */
+  onDrawn?: () => void
+  /** Where the shell on screen puts its search, for the host's find bar (protocol 2.69.0). */
+  finder?: FindSlot
+  /** A count that changed by itself under an open search, to the host. */
+  onFound?: (count: FindCount) => void
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
   projectPath: string | null
@@ -278,6 +304,11 @@ export function Shells({
   }, [where, projectPath, projectId])
 
   const current = held.sessions.find((s) => s.key === held.shown?.key) ?? null
+  /* Drawn without a shell (protocol 2.70.0): the words of a cover, and nothing to wait for. */
+  const wordsOnly = Boolean(cover && cover !== 'waiting' && !current)
+  useEffect(() => {
+    if (wordsOnly) onDrawn?.()
+  }, [wordsOnly, onDrawn])
   const standing = current ? standings[label(current)] : undefined
 
   /*
@@ -326,25 +357,11 @@ export function Shells({
    * or another shell coming on screen. Nothing a person types changes it. With no shell yet, or a
    * cover over the page, there is nothing to offer and none is declared.
    */
-  const items = useMemo<HeaderItemInput[]>(() => {
-    if (!current || (cover && !current)) return []
-    const why = standing?.at === 'closed' ? standing.why : null
-    return [
-      {
-        kind: 'run',
-        id: 'new-shell',
-        label: 'New shell',
-        icon: 'terminal',
-        /* Failed is what the Run trigger shows without the menu being opened: this shell has ended. */
-        state: dead ? 'failed' : 'idle',
-        /* Why it ended is a readout: the footer's, where a host draws one; else said on the item. */
-        result: why && !drawsFooter ? (why.length > 32 ? `${why.slice(0, 31)}…` : why) : null,
-        disabled: dead || relocated ? null : 'The shell here is still running.',
-        /* Pressed on a shell that is still running (its folder was renamed), it ends that shell: asked first. */
-        confirm: !dead && relocated,
-      },
-    ]
-  }, [current?.key, Boolean(current), cover === null, dead, relocated, standing?.at === 'closed' ? standing.why : null, drawsFooter])
+  const items = useMemo<HeaderItemInput[]>(
+    () => headerItems({ shell: Boolean(current), dead, relocated, why: standing?.at === 'closed' ? standing.why : null, drawsFooter }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [current?.key, Boolean(current), cover === null, dead, relocated, standing?.at === 'closed' ? standing.why : null, drawsFooter],
+  )
   const itemsKey = JSON.stringify(items)
   useEffect(() => {
     header?.(JSON.parse(itemsKey) as HeaderItemInput[])
@@ -397,7 +414,7 @@ export function Shells({
           module's server stops, what the command printed before it died is
           the thing somebody wants to read, and the words go in the strip
           below instead of over it. */}
-      {cover && !current && <Cover state={cover} name={NAME} onRetry={knock} />}
+      {cover && cover !== 'waiting' && !current && <Cover state={cover} name={NAME} onRetry={knock} />}
       {current && renamedTo !== null && !drawsFooter && (
         /* One line, said once per rename, until the person dismisses it. Text only: the folder is a string. */
         <div className="flex items-center justify-between gap-2 border-b px-2 py-1" role="status" data-renamed={renamedTo}>
@@ -429,6 +446,8 @@ export function Shells({
                 at={session.at}
                 shown={shown}
                 covered={shown ? covered : undefined}
+                {...(shown ? { finder, onFound } : {})}
+                onDrawn={onDrawn}
                 onStanding={(next) => setStandings((all) => ({ ...all, [id]: next }))}
                 onStatus={(next) => setStatuses((all) => ({ ...all, [id]: next }))}
               />
