@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import type { Covered, FooterItemInput, HeaderItemInput } from 'kehikot-module-protocol'
-import { probeServer } from 'kehikot-module-protocol/client'
+import { probeServer, type FindCount } from 'kehikot-module-protocol/client'
 import { COVER_WORDS, Cover, TRY_AGAIN, coverFor, useHost, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
 
 import { TerminalView, type Standing } from './view/terminal-view.tsx'
+import type { TerminalFind } from './view/terminal-find.ts'
 import { FOOTER_DISMISS_RENAMED, FOOTER_TRY_AGAIN, footerItems } from './view/footer.ts'
 import type { ShellStatus } from './view/status-frame.ts'
 import { NOTHING_HELD, dismiss, forget, label, moved, restart, show, wanted, type Held } from './view/sessions.ts'
@@ -83,9 +84,14 @@ export function App() {
    * because `uses` is empty and a terminal has no questions.
    */
   const presses = useRef<Press | null>(null)
+  /** The search of the shell on screen, for the host's find bar (`TerminalView`). */
+  const finder = useRef<TerminalFind | null>(null)
   /* Whether a host has ever pressed a header item: such a host draws the header, and this page draws none of its own. */
   const [drawn, setDrawn] = useState(headerDrawn)
-  const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered } = useHost(ID, {
+  const { where, projectPath, projectId, theme, header, footer, drawsFooter, covered, findResult } = useHost(ID, {
+    /* The host's find bar (protocol 2.69.0): the shell on screen searches its screen and scrollback
+       (`terminal-find.ts`). No shell on screen is nothing to search. */
+    onFind: (query, ask) => (finder.current ? finder.current(query, ask) : ask.direction === 'close' ? undefined : 'unsupported'),
     onPress: (press) => {
       /* A press on the footer says the host draws the footer; only a header press says it draws the header. */
       if (press.place !== 'footer') {
@@ -125,7 +131,7 @@ export function App() {
   const server = useServerStanding()
   const cover = coverFor({ where, projectPath, server }, {})
 
-  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} covered={covered} />
+  return <Shells theme={theme} where={where} projectPath={projectPath} projectId={projectId} cover={cover} header={header} presses={presses} drawn={where === 'hosted' && drawn} footer={footer} drawsFooter={where === 'hosted' && drawsFooter === true} covered={covered} finder={finder} onFound={findResult} />
 }
 
 /**
@@ -169,7 +175,13 @@ export function Shells({
   footer,
   drawsFooter = false,
   covered,
+  finder,
+  onFound,
 }: {
+  /** Where the shell on screen puts its search, for the host's find bar (protocol 2.69.0). */
+  finder?: MutableRefObject<TerminalFind | null>
+  /** A count that changed by itself under an open search, to the host. */
+  onFound?: (count: FindCount) => void
   theme: 'light' | 'dark'
   where: 'listening' | 'unhosted' | 'hosted'
   projectPath: string | null
@@ -429,6 +441,7 @@ export function Shells({
                 at={session.at}
                 shown={shown}
                 covered={shown ? covered : undefined}
+                {...(shown ? { finder, onFound } : {})}
                 onStanding={(next) => setStandings((all) => ({ ...all, [id]: next }))}
                 onStatus={(next) => setStatuses((all) => ({ ...all, [id]: next }))}
               />
