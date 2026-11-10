@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import type { FindCount } from 'kehikot-module-protocol/client'
-import { findColours, terminalFind, type TerminalFind } from './terminal-find.ts'
+import { xtermFind, type FindSlot, type XtermFind } from 'kehikot-module-protocol/client/find'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
@@ -178,12 +178,18 @@ export function TerminalView({
   covered = NOT_COVERED,
   finder,
   onFound,
+  onDrawn,
 }: {
   /**
-   * Where the view puts its search of the screen and the scrollback, for the host's find bar
-   * (protocol 2.69.0, `terminal-find.ts`). Given only to the view on screen.
+   * Said once, when the first of the shell's output is drawn in the emulator or the socket ends
+   * (protocol 2.70.0): the page's `ready()`, so the host's cover comes off over a drawn screen.
    */
-  finder?: MutableRefObject<TerminalFind | null>
+  onDrawn?: () => void
+  /**
+   * Where the view puts its search of the screen and the scrollback, for the host's find bar
+   * (protocol 2.69.0, `xtermFind`). Given only to the view on screen.
+   */
+  finder?: FindSlot
   /** The count again, when new output changed it under an open search. */
   onFound?: (count: FindCount) => void
   theme: 'light' | 'dark'
@@ -239,8 +245,8 @@ export function TerminalView({
 
   const holder = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
-  /* The search of this view's emulator, once it has one (`terminal-find.ts`), and who hears a count that changed by itself. */
-  const searching = useRef<TerminalFind | null>(null)
+  /* The search of this view's emulator, once it has one (`xtermFind`), and who hears a count that changed by itself. */
+  const searching = useRef<XtermFind | null>(null)
   const found = useRef(onFound)
   found.current = onFound
   const themeNow = useRef(theme)
@@ -248,7 +254,7 @@ export function TerminalView({
   /* The host's find bar, for the view on screen: its search of the screen and the scrollback. */
   useEffect(() => {
     if (!finder) return
-    const find: TerminalFind = (query, ask) => (searching.current ? searching.current(query, ask) : 'unsupported')
+    const find: NonNullable<FindSlot['current']> = (query, ask) => (searching.current ? searching.current(query, ask) : 'unsupported')
     finder.current = find
     return () => {
       if (finder.current === find) finder.current = null
@@ -261,6 +267,8 @@ export function TerminalView({
      otherwise tear down the socket and the shell with it. */
   const told = useRef(onStanding)
   told.current = onStanding
+  const drawnNow = useRef(onDrawn)
+  drawnNow.current = onDrawn
   const statusTold = useRef(onStatus)
   statusTold.current = onStatus
 
@@ -298,8 +306,8 @@ export function TerminalView({
     terminal.loadAddon(fit)
     const search = new SearchAddon()
     terminal.loadAddon(search)
-    const finding = terminalFind(search, terminal, (count) => found.current?.(count), () => findColours(themeNow.current))
-    searching.current = finding.find
+    const finding = xtermFind(search, terminal, { onCount: (count) => found.current?.(count), theme: () => themeNow.current })
+    searching.current = finding
     terminal.open(node)
     term.current = terminal
     seen.emulatorMade()
@@ -409,7 +417,7 @@ export function TerminalView({
         /* Sizes, never contents. What comes out of somebody's shell is their
            session; see the essay in `trace.ts`. */
         seen.message(data.length)
-        terminal.write(data)
+        terminal.write(data, () => drawnNow.current?.())
         seen.written()
       }
 
@@ -424,6 +432,7 @@ export function TerminalView({
           void probeServer()
         }
         move({ at: 'closed', why })
+        drawnNow.current?.()
       }
 
       live.onerror = () => {

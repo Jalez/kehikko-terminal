@@ -1,6 +1,3 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-
 import './index.css'
 /**
  * Imported for its side effect, and the order on this page is the whole point.
@@ -19,6 +16,9 @@ import './index.css'
  * that has not run yet, which is the same bug wearing a bundler's clothes.
  */
 import 'kehikot-module-protocol/client'
+/* The page's whole entry (protocol 2.70.0): StrictMode, and ReportErrors around it, so a render that
+   throws is said to the host and drawn as text; a missing root is said too, rather than left blank. */
+import { mountPage } from 'kehikot-module-protocol/client/mount'
 import { App } from './app.tsx'
 import { keepFramesComing } from './view/frames.ts'
 import { watchThisPage } from './view/trace.ts'
@@ -52,11 +52,4 @@ keepFramesComing()
  */
 watchThisPage()
 
-const root = document.getElementById('root')
-if (root) {
-  createRoot(root).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  )
-}
+mountPage('root', <App />)

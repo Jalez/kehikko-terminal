@@ -1,0 +1,155 @@
+[
+  {
+    "name": "a shell at its prompt",
+    "header": [
+      {
+        "kind": "run",
+        "id": "new-shell",
+        "label": "New shell",
+        "icon": "terminal",
+        "state": "idle",
+        "result": null,
+        "disabled": "The shell here is still running.",
+        "confirm": false
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "state",
+        "text": "Idle",
+        "tooltip": "zsh is waiting at its prompt."
+      },
+      {
+        "kind": "text",
+        "id": "cwd",
+        "text": "~/project",
+        "tooltip": "/Users/me/project"
+      },
+      {
+        "kind": "text",
+        "id": "shell",
+        "text": "zsh",
+        "align": "end",
+        "optional": true,
+        "tooltip": "The shell: zsh"
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "a command running, the folder renamed",
+    "header": [
+      {
+        "kind": "run",
+        "id": "new-shell",
+        "label": "New shell",
+        "icon": "terminal",
+        "state": "idle",
+        "result": null,
+        "disabled": null,
+        "confirm": true
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "state",
+        "text": "Running vim",
+        "tooltip": "vim is running in front of the shell."
+      },
+      {
+        "kind": "text",
+        "id": "cwd",
+        "text": "~/project",
+        "tooltip": "/Users/me/project"
+      },
+      {
+        "kind": "text",
+        "id": "renamed",
+        "text": "This folder was renamed to ~/renamed. The shell still works in it but shows the old name; open a new shell to start fre…",
+        "level": "warn",
+        "tooltip": "This folder was renamed to ~/renamed. The shell still works in it but shows the old name; open a new shell to start fresh."
+      },
+      {
+        "kind": "run",
+        "id": "dismiss-renamed",
+        "label": "Dismiss",
+        "icon": "x",
+        "align": "end"
+      },
+      {
+        "kind": "text",
+        "id": "shell",
+        "text": "zsh",
+        "align": "end",
+        "optional": true,
+        "tooltip": "The shell: zsh"
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "the shell ended",
+    "header": [
+      {
+        "kind": "run",
+        "id": "new-shell",
+        "label": "New shell",
+        "icon": "terminal",
+        "state": "failed",
+        "result": null,
+        "disabled": null,
+        "confirm": false
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "ended",
+        "text": "The shell ended: exit 0",
+        "level": "warn",
+        "tooltip": "The shell ended: exit 0. New shell, in the header, opens another."
+      },
+      {
+        "kind": "text",
+        "id": "cwd",
+        "text": "~/project",
+        "tooltip": "/Users/me/project"
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "its server down under the last screen",
+    "header": [
+      {
+        "kind": "run",
+        "id": "new-shell",
+        "label": "New shell",
+        "icon": "terminal",
+        "state": "failed",
+        "result": null,
+        "disabled": null,
+        "confirm": false
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "cover",
+        "text": "Terminal’s own server is not answering.",
+        "level": "warn"
+      },
+      {
+        "kind": "run",
+        "id": "try-again",
+        "label": "Try again",
+        "icon": "refresh",
+        "align": "end",
+        "tooltip": "Ask whether Terminal’s own server is answering now."
+      }
+    ],
+    "state": true
+  }
+]
