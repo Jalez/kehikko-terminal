@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
+import { utf8Locale } from 'kehikot-module-protocol/serve'
 import { command, fenced, openable, opening, sayable, shellEnv } from '../shell.ts'
 
 /**
@@ -180,11 +181,18 @@ describe('the shell’s environment', () => {
         BUN_BE_BUN: '1',
         HOME: '/home/me',
       })
-      expect(env).toEqual({ PATH: [person, '/usr/bin', '/bin'].join(delimiter), HOME: '/home/me', TERM: 'xterm-256color' })
+      expect(env).toEqual({ PATH: [person, '/usr/bin', '/bin'].join(delimiter), HOME: '/home/me', LC_CTYPE: utf8Locale(), TERM: 'xterm-256color' })
       const ran = spawnSync('/bin/sh', ['-c', 'command -v bun; bun --version'], { env, encoding: 'utf8' })
       expect(ran.stdout).toBe(`${join(person, 'bun')}\nperson-bun\n`)
     } finally {
       rmSync(scratch, { recursive: true, force: true })
     }
+  })
+
+  test('a shell with no locale named gets a UTF-8 one; a named locale is kept', () => {
+    expect(shellEnv({ PATH: '/usr/bin', HOME: '/home/me' }).LC_CTYPE).toBe(utf8Locale())
+    const named = shellEnv({ PATH: '/usr/bin', HOME: '/home/me', LANG: 'fi_FI.UTF-8' })
+    expect(named.LANG).toBe('fi_FI.UTF-8')
+    expect(named.LC_CTYPE).toBeUndefined()
   })
 })

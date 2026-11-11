@@ -69,7 +69,9 @@ const TERM = 'xterm-256color'
 /**
  * A shell's environment: the person's (`personEnv`, without the host's own `bun` this module was
  * started with first on its PATH and `BUN_BE_BUN`), with `TERM`. A shell given the host's `bun`
- * without `BUN_BE_BUN` boots the host on every `bun` typed in it.
+ * without `BUN_BE_BUN` boots the host on every `bun` typed in it. With no locale named
+ * (`LC_ALL`, `LC_CTYPE`, `LANG`), as when the desktop started the host, `personEnv` names a UTF-8
+ * one (`utf8Locale`, protocol 2.75.0): otherwise `pbcopy` and friends read UTF-8 as Mac Roman.
  */
 export function shellEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
   return { ...personEnv(env), TERM }
