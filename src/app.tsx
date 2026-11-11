@@ -403,7 +403,7 @@ export function Shells({
   }, [drawsFooter, footer, footerKey])
 
   return (
-    <div className="bg-background text-foreground relative flex h-dvh min-h-0 flex-col">
+    <div data-kehikot-page className="text-foreground relative flex h-dvh min-h-0 flex-col">
       {/* The page's own way to New shell, only for a page no host draws for, and only while the shell is gone. */}
       {dead && current && !cover && !drawn ? (
         <HeaderFallback items={items} onPress={(press) => presses?.current?.(press) ?? restartRef.current()} className="absolute top-1 right-3" />
