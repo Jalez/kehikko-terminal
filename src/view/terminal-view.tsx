@@ -158,10 +158,20 @@ import { note, seen } from './trace.ts'
  * this is the one rectangle on the canvas that stays in the other theme, which
  * looks like a bug in the container rather than a thing nobody wired up.
  */
-function palette(theme: 'light' | 'dark') {
-  return theme === 'dark'
+function palette(theme: 'light' | 'dark', clear = noBackground()) {
+  const colours = theme === 'dark'
     ? { background: '#0a0a0a', foreground: '#e5e5e5', cursor: '#e5e5e5', selectionBackground: '#333333' }
     : { background: '#ffffff', foreground: '#171717', cursor: '#171717', selectionBackground: '#d4d4d4' }
+  return clear ? { ...colours, background: '#00000000' } : colours
+}
+
+/**
+ * Whether the container draws no background (Settings › Appearance, protocol 2.82.0): the page's
+ * `<html>` says so in `data-kehikot-background`, put there by the protocol's client. The emulator
+ * then paints no background of its own either, and the canvas shows through.
+ */
+function noBackground(): boolean {
+  return typeof document !== 'undefined' && document.documentElement.getAttribute('data-kehikot-background') === 'none'
 }
 
 export type Standing =
@@ -301,6 +311,8 @@ export function TerminalView({
       theme: palette(theme),
       /* The search addon's marks are decorations, which xterm still calls a proposed API. */
       allowProposedApi: true,
+      /* A see-through background, for a container that draws none (`noBackground`). */
+      allowTransparency: true,
     })
     const fit = new FitAddon()
     terminal.loadAddon(fit)
@@ -609,6 +621,16 @@ export function TerminalView({
   useEffect(() => {
     if (term.current) term.current.options.theme = palette(theme)
   }, [theme])
+
+  /* The container's background is switched on <html> by the client, not passed down: heard there. */
+  useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return
+    const heard = new MutationObserver(() => {
+      if (term.current) term.current.options.theme = palette(themeNow.current)
+    })
+    heard.observe(document.documentElement, { attributes: true, attributeFilter: ['data-kehikot-background'] })
+    return () => heard.disconnect()
+  }, [])
 
   /*
    * This became the session on screen: take the keyboard.
